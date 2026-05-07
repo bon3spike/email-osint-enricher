@@ -2,9 +2,10 @@
 
 Repo: https://github.com/p1ngul1n0/blackbird
 
-Strategy:
-  A) CLI: `blackbird --email <email> --json` или `blackbird --username <username> --json`
-  B) Если не установлен — пропустить.
+Detection order:
+  1) CLI `blackbird` in PATH (system-wide install)
+  2) Vendored copy at `vendor/blackbird/blackbird.py` (bundled in repo)
+  3) If neither found — skip gracefully.
 
 Blackbird поддерживает:
   - Поиск по email
@@ -18,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -26,6 +29,10 @@ from email_osint_enricher.providers.base import BaseProvider, ProviderContext, P
 from email_osint_enricher.schemas import BlackbirdResult
 
 logger = logging.getLogger("enricher")
+
+# Locate vendored blackbird
+_VENDOR_ROOT = Path(__file__).resolve().parents[3] / "vendor" / "blackbird"
+_VENDOR_SCRIPT = _VENDOR_ROOT / "blackbird.py"
 
 
 class BlackbirdProvider(BaseProvider):
@@ -111,19 +118,41 @@ class BlackbirdProvider(BaseProvider):
         """Поиск по username через Blackbird CLI."""
         return await self._run_blackbird("--username", username)
 
+    def _resolve_cmd(self) -> list[str]:
+        """Determine how to invoke Blackbird.
+
+        Priority:
+          1) `blackbird` binary in PATH
+          2) Vendored `vendor/blackbird/blackbird.py`
+        """
+        if shutil.which("blackbird"):
+            return ["blackbird"]
+        if _VENDOR_SCRIPT.exists():
+            return [sys.executable, str(_VENDOR_SCRIPT)]
+        return []
+
     async def _run_blackbird(self, flag: str, value: str) -> list[str]:
         """Запустить Blackbird CLI и вернуть найденные URL профилей."""
         profiles: list[str] = []
+
+        cmd = self._resolve_cmd()
+        if not cmd:
+            logger.info(
+                "Blackbird не найден ни в PATH, ни в vendor/blackbird/. "
+                "Склонируй submodule: git submodule update --init"
+            )
+            return profiles
 
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 proc = await asyncio.wait_for(
                     asyncio.create_subprocess_exec(
-                        "blackbird", flag, value,
+                        *cmd, flag, value,
                         "--json", tmpdir,
                         "--no-update",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
+                        cwd=str(_VENDOR_ROOT) if _VENDOR_SCRIPT.exists() and cmd[0] != "blackbird" else None,
                     ),
                     timeout=self.timeout,
                 )
@@ -149,7 +178,7 @@ class BlackbirdProvider(BaseProvider):
                         logger.debug(f"Blackbird stderr: {stderr.decode()[:500]}")
 
         except FileNotFoundError:
-            logger.info("Blackbird CLI не найден. Установите: pip install blackbird")
+            logger.info("Blackbird CLI не найден.")
         except asyncio.TimeoutError:
             logger.warning(f"Blackbird timeout для {value}")
         except Exception as e:

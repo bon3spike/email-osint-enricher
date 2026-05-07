@@ -3,34 +3,74 @@
 Локальный CLI-инструмент для массового OSINT-обогащения email-списков.
 На вход — CSV/XLSX с email-ами, на выход — таблица со всеми найденными данными и скорингом.
 
-**12 OSINT-провайдеров** • **8 метрик скоринга** • **CSV + XLSX + JSONL выход** • **Batch + Resume** • **Без API-ключей в базовой конфигурации**
+**12 OSINT-провайдеров** • **8 метрик скоринга** • **CSV + XLSX + JSONL выход** • **Batch + Resume** • **Всё в одной репе**
 
 ---
 
-## 🚀 Быстрый старт
+## 🚀 Установка (всё в одной репе)
+
+### Один скрипт — всё ставит:
 
 ```bash
-# Клонирование и установка
-git clone https://github.com/bon3spike/email-osint-enricher.git
+git clone --recursive https://github.com/bon3spike/email-osint-enricher.git
 cd email-osint-enricher
+bash scripts/setup.sh
+```
+
+Скрипт автоматически:
+1. Установит системные зависимости (`libcairo2-dev`, `pkg-config`)
+2. Скачает Blackbird как git submodule в `vendor/`
+3. Установит все Python-зависимости + все OSINT-провайдеры
+4. Создаст `config.yaml` и `.env` из шаблонов
+5. Проверит что все тулзы доступны
+6. Запустит тесты
+
+### Ручная установка (если хочется по шагам):
+
+```bash
+# 1. Клонируем с submodules
+git clone --recursive https://github.com/bon3spike/email-osint-enricher.git
+cd email-osint-enricher
+
+# 2. Системные зависимости (Ubuntu/Debian — для maigret/pycairo)
+sudo apt-get install -y libcairo2-dev pkg-config build-essential
+
+# 3. Ставим всё
 pip install -e ".[dev]"
 
-# Один email
-email-osint-enricher single -e user@gmail.com
+# 4. Зависимости Blackbird (из vendor/)
+pip install -r vendor/blackbird/requirements.txt
 
-# Пакетная обработка
-email-osint-enricher batch -i emails.csv -o output/
+# 5. Конфиг
+cp config.yaml.example config.yaml
+cp .env.example .env
 
-# Просмотр всех провайдеров
+# 6. Проверка
 email-osint-enricher list-providers
+pytest tests/ -v
 ```
+
+### GHunt — одноразовая авторизация:
+
+```bash
+ghunt login
+# Он попросит Google cookies из браузера (SID, SSID, APISID, SAPISID, HSID)
+# Достать: расширение EditThisCookie на accounts.google.com
+# Делается один раз, потом работает автоматически
+```
+
+---
 
 ## 📋 Требования
 
-- Python 3.10+
-- pip (или uv)
-- Для core-провайдеров: `ghunt`, `holehe`, `blackbird`, `maigret`, `sherlock`, `h8mail` — CLI-инструменты в PATH
-- Для опциональных провайдеров: см. таблицу ниже
+- Python 3.11+
+- pip
+- `libcairo2-dev` + `pkg-config` (для maigret — Ubuntu: `apt install`, macOS: `brew install cairo`)
+- Git (для submodules)
+
+Все OSINT-тулзы устанавливаются автоматически через pip:
+- `ghunt`, `holehe`, `h8mail`, `maigret`, `sherlock-project` — как pip-зависимости
+- `blackbird` — как git submodule в `vendor/blackbird/`
 
 ---
 
@@ -52,7 +92,7 @@ email-osint-enricher list-providers
 
 | # | Провайдер | Требует | Что собирает |
 |---|-----------|---------|--------------|
-| 8 | **Sherlock** | `sherlock` в PATH | Профили на 400+ сайтах (fallback для Maigret) |
+| 8 | **Sherlock** | ✅ уже установлен | Профили на 400+ сайтах (fallback для Maigret) |
 | 9 | **Mosint** | `mosint` Go-бинарник | social_signal, breach_signal, domain_signal |
 | 10 | **Buster** | `buster` в PATH | Соц. аккаунты, ссылки, reverse whois, usernames |
 | 11 | **User Email Enrichment** | NPM / `npx` | Имя, аватар, социальные профили |
@@ -108,19 +148,6 @@ final = 0.25×identity + 0.20×footprint + 0.15×social
 | **Weak** | ≥15 | Попробовать дополнительные провайдеры |
 | **No Signal** | <15 | Не приоритизировать |
 
-### Provider Consensus
-
-- +10 баллов: один и тот же URL найден 2+ провайдерами
-- +15 баллов: одна и та же платформа найдена 2+ провайдерами
-- Максимум 100
-
-### Conflict Risk
-
-- +30: имя из enrichment не совпадает с applicantName
-- +20: слишком много слабых профилей (≥5)
-- +15: разные имена из разных провайдеров
-- Максимум 100
-
 ---
 
 ## 📥 Вход / Выход
@@ -130,8 +157,7 @@ final = 0.25×identity + 0.20×footprint + 0.15×social
 CSV или XLSX с колонками:
 - `email` (обязательно)
 - `applicantName` (опционально — для name matching)
-- `applicantCountry` (опционально)
-- `applicantId`, `externalId`, `claim_value`, `lead_score`, `tier` (опционально — passthrough)
+- `applicantCountry`, `applicantId`, `externalId`, `claim_value`, `lead_score`, `tier` (опционально)
 
 ### Выход
 
@@ -141,58 +167,32 @@ output/
 ├── enriched_results.xlsx
 ├── enriched_results.jsonl
 ├── run_summary.json
-├── errors.json          # только ошибки
-├── logs/                # логи
+├── errors.json
+├── logs/
 └── raw/                 # сырые JSON от каждого провайдера
-    ├── ghunt/
-    ├── holehe/
-    ├── emailrep/
-    └── ...
 ```
-
-Каждая строка выхода содержит:
-- Все поля от 12 провайдеров
-- 8 скоров + tier + recommended_action
-- Объединённый список профилей (merged, deduplicated по URL)
 
 ---
 
 ## ⌨️ CLI
 
 ```bash
-# Полная справка
-email-osint-enricher --help
-
-# Один email
-email-osint-enricher single -e user@gmail.com -o output/
-
-# Пакетная обработка
-email-osint-enricher batch -i emails.csv -o output/
-
-# XLSX с выбором листа и колонки
-email-osint-enricher batch -i data.xlsx --sheet "Sheet1" --email-column "Email Address"
-
-# Resume после прерывания
-email-osint-enricher batch -i emails.csv --resume
-
-# Dry run (проверка без вызова провайдеров)
-email-osint-enricher batch -i emails.csv --dry-run
-
-# Force GHunt для non-Gmail
-email-osint-enricher single -e user@company.com --force-ghunt
-
-# Через прокси
-email-osint-enricher batch -i emails.csv --proxy socks5://127.0.0.1:9050
-
-# Список провайдеров
-email-osint-enricher list-providers
+email-osint-enricher --help                          # справка
+email-osint-enricher list-providers                  # все провайдеры
+email-osint-enricher single -e user@gmail.com        # один email
+email-osint-enricher batch -i emails.csv -o output/  # пакетная обработка
+email-osint-enricher batch -i data.xlsx --sheet "Sheet1" --email-column "Email"
+email-osint-enricher batch -i emails.csv --resume    # продолжить после прерывания
+email-osint-enricher batch -i emails.csv --dry-run   # проверка без запуска
+email-osint-enricher single -e user@corp.com --force-ghunt  # GHunt для non-Gmail
+email-osint-enricher batch -i emails.csv --disable-providers mosint,buster
 ```
 
 ---
 
 ## ⚙️ Конфигурация
 
-Скопируйте `config.yaml.example` → `config.yaml`:
+`config.yaml` — управление провайдерами, батчингом, выходом:
 
 ```yaml
 providers:
@@ -204,37 +204,28 @@ providers:
     timeout_seconds: 60
   mosint:
     enabled: false  # нужен Go-бинарник
-  # ...
-
 batch:
   concurrency: 3
   delay_seconds: 1.5
-  max_retries: 2
-
 output:
   save_raw_json: true
   write_xlsx: true
-  write_csv: true
-  write_jsonl: true
 ```
 
-### Переменные окружения
+### API-ключи (`.env`):
 
 ```bash
-# Опционально — для EmailRep (больше лимитов)
-export EMAILREP_API_KEY=your_key
-
-# Обязательно для EmailCrawlr
-export EMAILCRAWLR_API_KEY=your_key
+EMAILREP_API_KEY=your_key      # опционально — больше лимитов
+EMAILCRAWLR_API_KEY=your_key   # обязательно для EmailCrawlr
 ```
 
 ---
 
 ## 🛡️ Безопасность
 
-- ⛔ Никаких паролей/хэшей в выходных файлах (автоматическая санитизация)
+- ⛔ Никаких паролей/хэшей в выходных файлах (автосанитизация)
 - 🔒 Email-ы маскируются в логах
-- ✅ Подпроцессные провайдеры (Mosint/Buster/UE) не ломают pipeline если не установлены
+- ✅ Провайдеры не ломают pipeline если не установлены
 - 📜 Только публичные данные — lawful OSINT
 
 ---
@@ -242,61 +233,26 @@ export EMAILCRAWLR_API_KEY=your_key
 ## 🧪 Тесты
 
 ```bash
-# Запуск всех тестов
 pytest tests/ -v
-
-# Или через pip/uv
-python -m pytest tests/ -v
 ```
 
-111 тестов покрывают:
-- Все 12 провайдеров в реестре
-- Email-утилиты (нормализация, классификация, маскировка)
-- Загрузку CSV/XLSX
-- Username генерацию (включая Cyrillic)
-- Все 8 метрик скоринга
-- Profile merging и dedup
-- Graceful failure для отсутствующих бинарников
-- Мокированный EmailRep (high/suspicious)
-- Санитизацию паролей/хэшей (Buster)
-- Provider consensus / conflict scoring
-- Отключённые провайдеры не влияют на скор
+111 тестов: все провайдеры, скоринг, merging, утилиты, graceful failures.
 
 ---
 
 ## 📂 Структура проекта
 
 ```
-email_osint_enricher/
+email-osint-enricher/
+├── scripts/setup.sh              # ← полная установка одной командой
+├── vendor/blackbird/             # ← Blackbird (git submodule)
 ├── src/email_osint_enricher/
-│   ├── __init__.py, __main__.py
-│   ├── cli.py              # CLI (single, batch, list-providers)
-│   ├── config.py            # Загрузка config.yaml
-│   ├── schemas.py           # Pydantic модели (12 провайдеров, scoring, summary)
-│   ├── pipeline.py          # Оркестрация провайдеров
-│   ├── scoring.py           # 8 метрик + merge_profiles
-│   ├── email_utils.py       # Нормализация, MX, Google Workspace
-│   ├── username_utils.py    # Генерация username-кандидатов
-│   ├── input_loader.py      # CSV/XLSX загрузка
-│   ├── output_writer.py     # CSV/XLSX/JSONL запись
-│   ├── logging_utils.py     # Настройка логирования
-│   └── providers/
-│       ├── base.py          # BaseProvider, ProviderContext
-│       ├── ghunt_provider.py
-│       ├── holehe_provider.py
-│       ├── blackbird_provider.py
-│       ├── maigret_provider.py
-│       ├── sherlock_provider.py
-│       ├── h8mail_provider.py
-│       ├── phone_extractor.py
-│       ├── emailrep_provider.py
-│       ├── mosint_provider.py
-│       ├── buster_provider.py
-│       ├── user_email_enrichment_provider.py
-│       └── emailcrawlr_provider.py
-├── tests/                   # 111 тестов
-├── config.yaml.example
-├── .env.example
+│   ├── cli.py, pipeline.py, scoring.py, schemas.py
+│   ├── config.py, email_utils.py, username_utils.py
+│   ├── input_loader.py, output_writer.py
+│   └── providers/ (12 провайдеров)
+├── tests/ (111 тестов)
+├── config.yaml.example, .env.example
 └── pyproject.toml
 ```
 

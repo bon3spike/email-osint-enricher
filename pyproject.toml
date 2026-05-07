@@ -4,12 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "email-osint-enricher"
-version = "0.2.0"
-description = "Local OSINT email enrichment tool — GHunt, Holehe, Blackbird, Maigret, Sherlock, h8mail + Phone Extractor"
+version = "0.3.0"
+description = "Local OSINT email enrichment tool — 12 providers, advanced scoring, all-in-one repo"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
+    # Core
     "pandas>=2.1",
     "openpyxl>=3.1",
     "pydantic>=2.5",
@@ -22,18 +23,18 @@ dependencies = [
     "tenacity>=8.2",
     "python-dotenv>=1.0",
     "dnspython>=2.4",
-]
-
-[project.optional-dependencies]
-ghunt = ["ghunt>=2.0"]
-holehe = ["holehe>=1.61"]
-phone = ["phonenumbers>=8.13", "beautifulsoup4>=4.12"]
-all = [
+    # Bundled OSINT providers
     "ghunt>=2.0",
     "holehe>=1.61",
+    "h8mail>=2.5",
+    "sherlock-project>=0.14",
+    "maigret>=0.4",
+    # Phone / web scraping
     "phonenumbers>=8.13",
     "beautifulsoup4>=4.12",
 ]
+
+[project.optional-dependencies]
 dev = ["pytest>=7.4", "pytest-asyncio>=0.23"]
 
 [project.scripts]
