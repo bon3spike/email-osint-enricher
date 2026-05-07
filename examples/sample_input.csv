@@ -1,0 +1,11 @@
+email,applicantId,applicantName,applicantCountry,claim_value,lead_score,tier
+john.doe@gmail.com,APP-001,John Doe,US,15000.00,75,A
+jane.smith+ftx@gmail.com,APP-002,Jane Smith,UK,8500.00,60,B
+info@example-corp.com,APP-003,Example Corp,DE,120000.00,90,A
+user42@yahoo.com,APP-004,User FortyTwo,JP,3200.00,30,C
+contact@blockchain-startup.io,APP-005,Blockchain Startup,SG,45000.00,55,B
+random.person@protonmail.com,APP-006,Random Person,CH,7800.00,40,B
+trading.desk@hotmail.com,APP-007,Trading Desk,US,2100.00,20,C
+investor@googlemail.com,APP-008,Early Investor,CA,95000.00,85,A
+alice.wonderland@mail.ru,APP-009,Alice Wonderland,RU,5600.00,35,C
+satoshi.test@gmail.com,APP-010,Satoshi Test,JP,250000.00,95,A

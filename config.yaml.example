@@ -1,0 +1,26 @@
+# email_osint_enricher configuration
+# Copy this file to config.yaml and adjust as needed.
+
+providers:
+  ghunt:
+    enabled: true
+    timeout_seconds: 120
+    force: false           # If true, run GHunt even for non-Gmail emails
+  holehe:
+    enabled: true
+    timeout_seconds: 120
+
+batch:
+  concurrency: 3           # Max parallel provider calls
+  delay_seconds: 1.5       # Delay between emails in batch
+  max_retries: 2           # Retries per provider call on failure
+
+output:
+  save_raw_json: true      # Store raw provider JSON in output/raw/
+  write_xlsx: true
+  write_csv: true
+  write_jsonl: true
+
+logging:
+  level: INFO              # DEBUG / INFO / WARNING / ERROR
+  mask_emails: true        # Mask emails in log output (j***@domain.com)
