@@ -2,7 +2,7 @@
 
 Strategy:
   A) Try to import holehe as a Python library and call its async modules.
-  B) Fallback: invoke `holehe <email> --only-used --json <path>` via subprocess.
+  B) Fallback: invoke `holehe <email> --only-used` via subprocess.
   C) If neither works, return an empty result without crashing.
 """
 
@@ -27,9 +27,11 @@ class HoleheProvider:
         self,
         timeout: int = 120,
         raw_output_dir: Optional[Path] = None,
+        proxy: Optional[str] = None,
     ):
         self.timeout = timeout
         self.raw_output_dir = raw_output_dir
+        self.proxy = proxy
         self._lib_available: Optional[bool] = None
 
     def _check_library(self) -> bool:
@@ -76,14 +78,16 @@ class HoleheProvider:
         try:
             import httpx
             from holehe import modules
-
-            # holehe's core.import_submodules + launch approach
             from holehe.core import import_submodules, launch_module
 
             module_list = import_submodules(modules)
             out: list[dict] = []
 
-            client = httpx.AsyncClient(timeout=self.timeout)
+            client_kwargs = {"timeout": self.timeout}
+            if self.proxy:
+                client_kwargs["proxies"] = self.proxy
+
+            client = httpx.AsyncClient(**client_kwargs)
             try:
                 tasks = []
                 for module_name in module_list:
@@ -97,7 +101,13 @@ class HoleheProvider:
                             )
                         )
 
-                await asyncio.gather(*tasks, return_exceptions=True)
+                results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Log individual module failures at debug level
+                for i, r in enumerate(results_raw):
+                    if isinstance(r, Exception):
+                        logger.debug(f"Holehe module failed: {r}")
+
             finally:
                 await client.aclose()
 
@@ -114,9 +124,13 @@ class HoleheProvider:
     async def _enrich_via_cli(self, email: str, result: HoleheResult) -> HoleheResult:
         """Fallback: call holehe CLI."""
         try:
+            cmd = ["holehe", email, "--only-used"]
+            if self.proxy:
+                cmd.extend(["--proxy", self.proxy])
+
             proc = await asyncio.wait_for(
                 asyncio.create_subprocess_exec(
-                    "holehe", email, "--only-used",
+                    *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 ),
@@ -134,6 +148,8 @@ class HoleheProvider:
                 result.raw_json_path = self._save_raw(email, raw_data)
             else:
                 logger.warning(f"Holehe CLI returned code {proc.returncode}")
+                if stderr:
+                    logger.debug(f"Holehe stderr: {stderr.decode()[:500]}")
                 result.success = False
 
         except FileNotFoundError:
@@ -153,9 +169,11 @@ class HoleheProvider:
         for entry in out:
             if not isinstance(entry, dict):
                 continue
-            if entry.get("exists") or entry.get("rateLimit") is False and entry.get("exists"):
+            # holehe marks exists=True when the email is registered
+            if entry.get("exists") is True:
                 name = entry.get("name", entry.get("domain", "unknown"))
                 registered.append(name)
+            # Recovery info
             if entry.get("phoneNumber") or entry.get("others"):
                 recovery_hints += 1
 
@@ -177,7 +195,7 @@ class HoleheProvider:
 
         for line in text.splitlines():
             line = line.strip()
-            # holehe output format: [+] service_name
+            # holehe output: [+] service_name
             if line.startswith("[+]"):
                 parts = line.replace("[+]", "").strip().split()
                 if parts:

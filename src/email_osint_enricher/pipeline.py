@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -14,15 +15,19 @@ from email_osint_enricher.config import load_config
 from email_osint_enricher.email_utils import (
     classify_email,
     get_domain,
+    has_mx_record,
     is_google_email,
+    is_google_workspace,
     mask_email,
     normalize_email,
+    precheck_domains,
 )
 from email_osint_enricher.output_writer import write_results
 from email_osint_enricher.providers.ghunt_provider import GHuntProvider
 from email_osint_enricher.providers.holehe_provider import HoleheProvider
 from email_osint_enricher.schemas import (
     AppConfig,
+    EmailType,
     EnrichmentResult,
     GHuntResult,
     HoleheResult,
@@ -45,11 +50,15 @@ class EnrichmentPipeline:
         providers_filter: Optional[list[str]] = None,
         force_ghunt: bool = False,
         dry_run: bool = False,
+        resume: bool = False,
+        proxy: Optional[str] = None,
     ):
         self.config = config or load_config()
         self.output_dir = Path(output_dir)
         self.dry_run = dry_run
         self.force_ghunt = force_ghunt
+        self.resume = resume
+        self.proxy = proxy
 
         # Determine active providers
         self.active_providers: set[str] = set()
@@ -77,6 +86,7 @@ class EnrichmentPipeline:
         self.holehe = HoleheProvider(
             timeout=self.config.providers.get("holehe", AppConfig().providers["holehe"]).timeout_seconds,
             raw_output_dir=self.output_dir / "raw" / "holehe" if self.config.output.save_raw_json else None,
+            proxy=self.proxy,
         )
 
         self.semaphore = asyncio.Semaphore(self.config.batch.concurrency)
@@ -84,16 +94,54 @@ class EnrichmentPipeline:
         self.max_retries = self.config.batch.max_retries
         self.mask = self.config.logging.mask_emails
 
+        # Resume state
+        self._completed_emails: set[str] = set()
+        if self.resume:
+            self._load_resume_state()
+
+    def _load_resume_state(self):
+        """Load already-processed emails from previous run's JSONL."""
+        jsonl_path = self.output_dir / "enriched_results.jsonl"
+        if jsonl_path.exists():
+            count = 0
+            with open(jsonl_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        email = data.get("email_normalized") or data.get("email", "")
+                        status = data.get("status", "")
+                        if status in ("success", "partial") and email:
+                            self._completed_emails.add(email)
+                            count += 1
+                    except json.JSONDecodeError:
+                        continue
+            if count:
+                logger.info(f"Resume mode: loaded {count} previously completed emails")
+
     async def process_single(self, row: InputRow) -> EnrichmentResult:
         """Process a single email through the pipeline."""
         email = row.email
         email_display = mask_email(email) if self.mask else email
+        normalized = normalize_email(email)
+        domain = get_domain(email)
+
+        # DNS / MX precheck for domain classification
+        domain_has_mx = has_mx_record(domain) if domain else False
+        is_gws = is_google_workspace(domain) if domain else False
+
+        # Classify with MX awareness
+        email_type = classify_email(email)
+        if is_gws and email_type == EmailType.corporate:
+            email_type = EmailType.google_workspace
 
         result = EnrichmentResult(
             email=email,
-            email_normalized=normalize_email(email),
-            email_domain=get_domain(email),
-            email_type=classify_email(email).value,
+            email_normalized=normalized,
+            email_domain=domain,
+            email_type=email_type.value,
             input_row_id=row.input_row_id,
             applicantId=row.applicantId,
             externalId=row.externalId,
@@ -104,11 +152,35 @@ class EnrichmentPipeline:
             tier=row.tier,
         )
 
+        # Check resume
+        if self.resume and normalized in self._completed_emails:
+            result.status = ProcessingStatus.skipped.value
+            result.error_message = "already processed (resume mode)"
+            logger.debug(f"Skipping already-processed: {email_display}")
+            ghunt_res = GHuntResult()
+            holehe_res = HoleheResult()
+            result = score_result(result, ghunt_res, holehe_res, row)
+            return result
+
+        # Check MX — skip emails with no MX (undeliverable domain)
+        if domain and not domain_has_mx:
+            result.status = ProcessingStatus.skipped.value
+            result.error_message = f"Domain {domain} has no MX records — likely undeliverable"
+            logger.info(f"Skipping {email_display}: no MX records for {domain}")
+            ghunt_res = GHuntResult()
+            holehe_res = HoleheResult()
+            result = score_result(result, ghunt_res, holehe_res, row)
+            return result
+
         if self.dry_run:
             result.status = ProcessingStatus.skipped.value
             result.error_message = "dry-run mode"
-            logger.info(f"[DRY-RUN] Would process: {email_display}")
-            # Still compute scoring with empty providers
+            extra_info = []
+            if domain_has_mx:
+                extra_info.append("MX:✓")
+            if is_gws:
+                extra_info.append("GWS:✓")
+            logger.info(f"[DRY-RUN] Would process: {email_display} ({email_type.value}) {' '.join(extra_info)}")
             ghunt_res = GHuntResult()
             holehe_res = HoleheResult()
             result = score_result(result, ghunt_res, holehe_res, row)
@@ -116,11 +188,10 @@ class EnrichmentPipeline:
 
         ghunt_res = GHuntResult()
         holehe_res = HoleheResult()
-        errors: list[str] = []
 
         # GHunt
         if "ghunt" in self.active_providers:
-            should_run = is_google_email(email, force=self.force_ghunt)
+            should_run = is_google_email(email, force=self.force_ghunt) or is_gws
             if should_run:
                 logger.info(f"Running GHunt for {email_display}")
                 ghunt_res = await self._run_with_retry(
@@ -213,7 +284,6 @@ class EnrichmentPipeline:
                 return await coro_fn(email)
         except Exception as e:
             logger.error(f"{provider} all retries exhausted: {e}")
-            # Return empty result based on provider
             if provider == "ghunt":
                 return GHuntResult(checked=True, success=False)
             else:
@@ -221,9 +291,56 @@ class EnrichmentPipeline:
 
     async def process_batch(self, rows: list[InputRow]) -> tuple[list[EnrichmentResult], RunSummary]:
         """Process a batch of emails with progress bar and rate limiting."""
-        started_at = dt.datetime.utcnow().isoformat()
+        started_at = dt.datetime.now(dt.timezone.utc).isoformat()
         results: list[EnrichmentResult] = []
 
+        # ── Deduplication ────────────────────────────────────────────────
+        seen_normalized: set[str] = set()
+        unique_rows: list[InputRow] = []
+        duplicate_count = 0
+
+        for row in rows:
+            norm = normalize_email(row.email)
+            if norm in seen_normalized:
+                duplicate_count += 1
+                # Still add a result but mark as skipped duplicate
+                result = EnrichmentResult(
+                    email=row.email,
+                    email_normalized=norm,
+                    email_domain=get_domain(row.email),
+                    email_type=classify_email(row.email).value,
+                    input_row_id=row.input_row_id,
+                    status=ProcessingStatus.skipped.value,
+                    error_message="duplicate email (normalized)",
+                    applicantId=row.applicantId,
+                    externalId=row.externalId,
+                    applicantName=row.applicantName,
+                    applicantCountry=row.applicantCountry,
+                    claim_value=row.claim_value,
+                    lead_score=row.lead_score,
+                    tier=row.tier,
+                )
+                results.append(result)
+                continue
+            seen_normalized.add(norm)
+            unique_rows.append(row)
+
+        if duplicate_count:
+            logger.info(f"Deduplicated: {duplicate_count} duplicate emails removed, {len(unique_rows)} unique to process")
+
+        # ── Domain precheck (MX + Google Workspace detection) ────────────
+        if not self.dry_run:
+            logger.info("Pre-checking domains (MX records, Google Workspace detection)...")
+            all_emails = [r.email for r in unique_rows]
+            domain_info = precheck_domains(all_emails)
+            mx_ok = sum(1 for d in domain_info.values() if d["has_mx"])
+            gws_count = sum(1 for d in domain_info.values() if d["is_google_workspace"])
+            logger.info(
+                f"Domain precheck: {len(domain_info)} unique domains, "
+                f"{mx_ok} with MX, {gws_count} Google Workspace"
+            )
+
+        # ── Process unique emails ────────────────────────────────────────
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -231,18 +348,44 @@ class EnrichmentPipeline:
             TaskProgressColumn(),
             TextColumn("[cyan]{task.completed}/{task.total}"),
         ) as progress:
-            task = progress.add_task("Enriching emails", total=len(rows))
+            task = progress.add_task("Enriching emails", total=len(unique_rows))
 
-            for row in rows:
-                result = await self.process_single(row)
-                results.append(result)
-                progress.update(task, advance=1)
+            # Incremental JSONL writing for crash recovery
+            jsonl_path = self.output_dir / "enriched_results_partial.jsonl"
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
-                # Rate limit delay between emails
-                if self.delay > 0 and not self.dry_run:
-                    await asyncio.sleep(self.delay)
+            with open(jsonl_path, "a", encoding="utf-8") as jsonl_f:
+                for row in unique_rows:
+                    try:
+                        result = await self.process_single(row)
+                    except Exception as e:
+                        logger.error(f"Unhandled error for row {row.input_row_id}: {e}")
+                        result = EnrichmentResult(
+                            email=row.email,
+                            email_normalized=normalize_email(row.email),
+                            email_domain=get_domain(row.email),
+                            email_type=classify_email(row.email).value,
+                            input_row_id=row.input_row_id,
+                            status=ProcessingStatus.failed.value,
+                            error_message=str(e),
+                        )
 
-        finished_at = dt.datetime.utcnow().isoformat()
+                    results.append(result)
+
+                    # Write incrementally for crash recovery
+                    try:
+                        jsonl_f.write(result.model_dump_json() + "\n")
+                        jsonl_f.flush()
+                    except Exception:
+                        pass
+
+                    progress.update(task, advance=1)
+
+                    # Rate limit delay between emails
+                    if self.delay > 0 and not self.dry_run:
+                        await asyncio.sleep(self.delay)
+
+        finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
 
         # Build summary
         summary = self._build_summary(results, started_at, finished_at)
@@ -306,10 +449,17 @@ class EnrichmentPipeline:
     ) -> dict[str, str]:
         """Write results to disk."""
         errors = [r for r in results if r.status in (ProcessingStatus.failed.value,)]
-        return write_results(
+        paths = write_results(
             results=results,
             errors=errors,
             summary=summary,
             output_dir=self.output_dir,
             config=self.config.output,
         )
+
+        # Remove partial JSONL if final write succeeded
+        partial = self.output_dir / "enriched_results_partial.jsonl"
+        if partial.exists():
+            partial.unlink(missing_ok=True)
+
+        return paths

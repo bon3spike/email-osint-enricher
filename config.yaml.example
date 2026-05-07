@@ -12,7 +12,7 @@ providers:
 
 batch:
   concurrency: 3           # Max parallel provider calls
-  delay_seconds: 1.5       # Delay between emails in batch
+  delay_seconds: 2.0       # Delay between emails in batch (be gentle)
   max_retries: 2           # Retries per provider call on failure
 
 output:
@@ -24,3 +24,5 @@ output:
 logging:
   level: INFO              # DEBUG / INFO / WARNING / ERROR
   mask_emails: true        # Mask emails in log output (j***@domain.com)
+
+# proxy: socks5://127.0.0.1:9050   # Optional: route requests through proxy

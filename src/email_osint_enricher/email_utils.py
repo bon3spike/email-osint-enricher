@@ -1,9 +1,15 @@
-"""Email normalization, classification, and masking helpers."""
+"""Email normalization, classification, masking, DNS/MX checks."""
 
 from __future__ import annotations
 
+import asyncio
+import dns.resolver
+import logging
 import re
+from functools import lru_cache
 from email_osint_enricher.schemas import EmailType
+
+logger = logging.getLogger("enricher")
 
 # Well-known free providers (lowercase domains)
 FREE_PROVIDERS: set[str] = {
@@ -25,7 +31,19 @@ FREE_PROVIDERS: set[str] = {
 
 GOOGLE_DOMAINS: set[str] = {"gmail.com", "googlemail.com"}
 
+# Known Google MX patterns
+_GOOGLE_MX_PATTERNS = [
+    "google.com",
+    "googlemail.com",
+    "aspmx.l.google.com",
+    "smtp.google.com",
+]
+
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]+$")
+
+# Cache for MX lookups
+_mx_cache: dict[str, list[str]] = {}
+_gws_cache: dict[str, bool] = {}
 
 
 def is_valid_email(email: str) -> bool:
@@ -54,7 +72,7 @@ def get_domain(email: str) -> str:
 
 
 def classify_email(email: str) -> EmailType:
-    """Classify email into a type."""
+    """Classify email into a type. Uses cached MX data if available."""
     domain = get_domain(email)
     if not domain:
         return EmailType.unknown
@@ -62,8 +80,9 @@ def classify_email(email: str) -> EmailType:
         return EmailType.gmail
     if domain in FREE_PROVIDERS:
         return EmailType.free_provider
-    # Heuristic: if domain has known TLDs and looks corporate
-    # Google Workspace detection would need DNS MX lookup — mark as corporate for now
+    # Check if we already know it's Google Workspace
+    if _gws_cache.get(domain, False):
+        return EmailType.google_workspace
     return EmailType.corporate
 
 
@@ -72,7 +91,10 @@ def is_google_email(email: str, force: bool = False) -> bool:
     if force:
         return True
     domain = get_domain(email)
-    return domain in GOOGLE_DOMAINS
+    if domain in GOOGLE_DOMAINS:
+        return True
+    # Check Google Workspace cache
+    return _gws_cache.get(domain, False)
 
 
 def mask_email(email: str) -> str:
@@ -81,3 +103,87 @@ def mask_email(email: str) -> str:
     if not domain or len(local) == 0:
         return "***@***"
     return f"{local[0]}***@{domain}"
+
+
+# ── DNS / MX utilities ──────────────────────────────────────────────────────
+
+def lookup_mx(domain: str, timeout: float = 5.0) -> list[str]:
+    """Lookup MX records for a domain. Returns list of MX hostnames (lowercase).
+    Results are cached."""
+    if domain in _mx_cache:
+        return _mx_cache[domain]
+
+    try:
+        resolver = dns.resolver.Resolver()
+        resolver.lifetime = timeout
+        resolver.timeout = timeout
+        answers = resolver.resolve(domain, "MX")
+        mx_hosts = [str(rdata.exchange).rstrip(".").lower() for rdata in answers]
+        _mx_cache[domain] = mx_hosts
+        return mx_hosts
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN,
+            dns.resolver.NoNameservers, dns.resolver.Timeout,
+            dns.exception.DNSException) as e:
+        logger.debug(f"MX lookup failed for {domain}: {e}")
+        _mx_cache[domain] = []
+        return []
+
+
+def has_mx_record(domain: str) -> bool:
+    """Check if domain has any MX records (email is potentially deliverable)."""
+    return len(lookup_mx(domain)) > 0
+
+
+def is_google_workspace(domain: str) -> bool:
+    """Detect Google Workspace by checking MX records for Google patterns.
+    Results are cached."""
+    if domain in _gws_cache:
+        return _gws_cache[domain]
+
+    if domain in GOOGLE_DOMAINS:
+        _gws_cache[domain] = True
+        return True
+
+    mx_hosts = lookup_mx(domain)
+    is_gws = any(
+        any(pattern in mx_host for pattern in _GOOGLE_MX_PATTERNS)
+        for mx_host in mx_hosts
+    )
+    _gws_cache[domain] = is_gws
+
+    if is_gws:
+        logger.info(f"Detected Google Workspace domain: {domain}")
+
+    return is_gws
+
+
+async def async_lookup_mx(domain: str, timeout: float = 5.0) -> list[str]:
+    """Async wrapper for MX lookup (runs in thread pool)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lookup_mx, domain, timeout)
+
+
+async def async_is_google_workspace(domain: str) -> bool:
+    """Async wrapper for Google Workspace detection."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, is_google_workspace, domain)
+
+
+def precheck_domains(emails: list[str]) -> dict[str, dict]:
+    """Batch precheck unique domains: MX records + Google Workspace detection.
+    Returns dict[domain] -> {has_mx, is_google_workspace, mx_hosts}."""
+    domains = set(get_domain(e) for e in emails)
+    results = {}
+
+    for domain in domains:
+        if not domain:
+            continue
+        mx = lookup_mx(domain)
+        gws = is_google_workspace(domain)
+        results[domain] = {
+            "has_mx": len(mx) > 0,
+            "is_google_workspace": gws,
+            "mx_hosts": mx,
+        }
+
+    return results

@@ -13,7 +13,14 @@ from rich.table import Table
 
 from email_osint_enricher import __version__
 from email_osint_enricher.config import load_config
-from email_osint_enricher.email_utils import classify_email, get_domain, mask_email, normalize_email
+from email_osint_enricher.email_utils import (
+    classify_email,
+    get_domain,
+    has_mx_record,
+    is_google_workspace,
+    mask_email,
+    normalize_email,
+)
 from email_osint_enricher.input_loader import load_input
 from email_osint_enricher.logging_utils import setup_logging
 from email_osint_enricher.pipeline import EnrichmentPipeline
@@ -55,19 +62,26 @@ def single(
     ),
     force_ghunt: bool = typer.Option(False, "--force-ghunt", help="Run GHunt even for non-Gmail"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run — no actual provider calls"),
+    proxy: Optional[str] = typer.Option(None, "--proxy", help="HTTP/SOCKS proxy URL"),
 ):
     """Enrich a single email address."""
     cfg = load_config(config)
     log_dir = Path(out) / "logs"
     setup_logging(cfg.logging.level, log_dir)
 
+    domain = get_domain(email)
+    mx_ok = has_mx_record(domain) if domain else False
+    gws = is_google_workspace(domain) if domain else False
+
     console.print(Panel(
         f"[bold]Email OSINT Enricher[/bold] v{__version__}\n"
         f"Mode: single email\n"
         f"Email: {mask_email(email) if cfg.logging.mask_emails else email}\n"
-        f"Domain: {get_domain(email)}\n"
+        f"Domain: {domain}\n"
         f"Type: {classify_email(email).value}\n"
         f"Normalized: {normalize_email(email)}\n"
+        f"MX records: {'✓' if mx_ok else '✗'}\n"
+        f"Google Workspace: {'✓' if gws else '—'}\n"
         f"Dry run: {dry_run}",
         title="🔍 Enrichment",
     ))
@@ -81,6 +95,7 @@ def single(
         providers_filter=providers_list,
         force_ghunt=force_ghunt,
         dry_run=dry_run,
+        proxy=proxy,
     )
 
     result = asyncio.run(pipeline.process_single(row))
@@ -110,6 +125,8 @@ def batch(
     ),
     force_ghunt: bool = typer.Option(False, "--force-ghunt", help="Run GHunt even for non-Gmail"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run — validate input only"),
+    resume: bool = typer.Option(False, "--resume", help="Resume interrupted batch (skip already-processed)"),
+    proxy: Optional[str] = typer.Option(None, "--proxy", help="HTTP/SOCKS proxy URL"),
 ):
     """Enrich a batch of emails from CSV or XLSX."""
     cfg = load_config(config)
@@ -125,6 +142,8 @@ def batch(
         f"Input: {input}\n"
         f"Emails loaded: {len(rows)}\n"
         f"Providers: {providers or 'all enabled'}\n"
+        f"Resume: {resume}\n"
+        f"Proxy: {proxy or 'none'}\n"
         f"Dry run: {dry_run}",
         title="🔍 Batch Enrichment",
     ))
@@ -137,6 +156,8 @@ def batch(
         providers_filter=providers_list,
         force_ghunt=force_ghunt,
         dry_run=dry_run,
+        resume=resume,
+        proxy=proxy,
     )
 
     results, summary = asyncio.run(pipeline.process_batch(rows))
