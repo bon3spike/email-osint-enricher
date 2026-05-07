@@ -1,28 +1,74 @@
-# email_osint_enricher configuration
-# Copy this file to config.yaml and adjust as needed.
+# Email OSINT Enricher — Configuration
+# Copy to config.yaml and customize.
 
 providers:
+  # ── Core providers (enabled by default) ──────────────────────────────────
   ghunt:
     enabled: true
     timeout_seconds: 120
-    force: false           # If true, run GHunt even for non-Gmail emails
+    force: false  # Run GHunt even for non-Gmail domains
+
   holehe:
     enabled: true
     timeout_seconds: 120
 
+  blackbird:
+    enabled: true
+    timeout_seconds: 180
+
+  maigret:
+    enabled: true
+    timeout_seconds: 300  # Maigret is slower — deep OSINT
+
+  sherlock:
+    enabled: false  # Fallback for Maigret — enable if needed
+    timeout_seconds: 120
+
+  h8mail:
+    enabled: true
+    timeout_seconds: 120
+
+  phone_extractor:
+    enabled: true
+    timeout_seconds: 30
+
+  # ── Optional providers (v0.2) ────────────────────────────────────────────
+  emailrep:
+    enabled: true
+    timeout_seconds: 60
+    api_key_env: EMAILREP_API_KEY  # Optional — works unauthenticated too
+
+  mosint:
+    enabled: false   # Requires mosint Go binary in PATH
+    timeout_seconds: 180
+    command: mosint
+
+  buster:
+    enabled: false   # Requires buster Python tool in PATH
+    timeout_seconds: 180
+    command: buster
+
+  user_email_enrichment:
+    enabled: false   # Requires user-email-enrichment NPM package or npx
+    timeout_seconds: 120
+    command: user-email-enrichment
+
+  emailcrawlr:
+    enabled: false   # Requires EMAILCRAWLR_API_KEY
+    timeout_seconds: 60
+    api_key_env: EMAILCRAWLR_API_KEY
+
 batch:
-  concurrency: 3           # Max parallel provider calls
-  delay_seconds: 2.0       # Delay between emails in batch (be gentle)
-  max_retries: 2           # Retries per provider call on failure
+  concurrency: 3        # Parallel provider calls
+  delay_seconds: 1.5    # Delay between emails
+  max_retries: 2        # Retries per provider per email
 
 output:
-  save_raw_json: true      # Store raw provider JSON in output/raw/
+  save_raw_json: true    # Save raw provider JSON in output/raw/
   write_xlsx: true
   write_csv: true
   write_jsonl: true
 
 logging:
-  level: INFO              # DEBUG / INFO / WARNING / ERROR
-  mask_emails: true        # Mask emails in log output (j***@domain.com)
-
-# proxy: socks5://127.0.0.1:9050   # Optional: route requests through proxy
+  level: INFO
+  mask_emails: true      # Mask emails in log output

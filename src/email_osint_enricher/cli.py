@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -24,11 +26,14 @@ from email_osint_enricher.email_utils import (
 from email_osint_enricher.input_loader import load_input
 from email_osint_enricher.logging_utils import setup_logging
 from email_osint_enricher.pipeline import EnrichmentPipeline
+from email_osint_enricher.providers import PROVIDER_REGISTRY, PROVIDER_META
 from email_osint_enricher.schemas import InputRow
+
+ALL_PROVIDERS = ",".join(PROVIDER_REGISTRY.keys())
 
 app = typer.Typer(
     name="email-osint-enricher",
-    help="Email OSINT enrichment tool using GHunt and Holehe.",
+    help="Email OSINT enrichment tool — 12 providers, scored output.",
     add_completion=False,
 )
 console = Console()
@@ -51,6 +56,70 @@ def main(
     pass
 
 
+# ── list-providers ───────────────────────────────────────────────────────────
+
+@app.command("list-providers")
+def list_providers(
+    config: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+):
+    """Show all available providers and their status."""
+    cfg = load_config(config) if config else None
+
+    table = Table(title="Available Providers", show_lines=True)
+    table.add_column("Provider", style="cyan", no_wrap=True)
+    table.add_column("Default", justify="center")
+    table.add_column("Installed", justify="center")
+    table.add_column("API Key", justify="center")
+    table.add_column("Configured", justify="center")
+    table.add_column("Status", style="bold")
+
+    for name in PROVIDER_REGISTRY:
+        meta = PROVIDER_META.get(name, {})
+        default_enabled = meta.get("default_enabled", False)
+        requires_api = meta.get("requires_api_key", False)
+        binary = meta.get("binary")
+        api_key_env = meta.get("api_key_env", "")
+
+        # Check installed
+        installed = True
+        if binary:
+            installed = shutil.which(binary) is not None
+
+        # Check API key configured
+        api_configured = "—"
+        if api_key_env:
+            api_configured = "✓" if os.getenv(api_key_env) else "✗"
+
+        # Check config
+        configured = "—"
+        if cfg and name in cfg.providers:
+            pc = cfg.providers[name]
+            configured = "✓" if pc.enabled else "off"
+
+        # Status
+        if installed and (not requires_api or os.getenv(api_key_env, "")):
+            status = "[green]ready[/green]"
+        elif not installed and binary:
+            status = "[yellow]not installed[/yellow]"
+        elif requires_api and not os.getenv(api_key_env, ""):
+            status = "[yellow]no API key[/yellow]"
+        else:
+            status = "[green]ready[/green]"
+
+        table.add_row(
+            name,
+            "✓" if default_enabled else "—",
+            "✓" if installed else "✗",
+            ("req" if requires_api else ("opt" if api_key_env else "—")),
+            configured,
+            status,
+        )
+
+    console.print(table)
+
+
+# ── single ───────────────────────────────────────────────────────────────────
+
 @app.command()
 def single(
     email: str = typer.Option(..., "--email", "-e", help="Email address to enrich"),
@@ -58,7 +127,11 @@ def single(
     config: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
     providers: Optional[str] = typer.Option(
         None, "--providers", "-p",
-        help="Comma-separated providers to use: ghunt,holehe",
+        help=f"Comma-separated providers to enable: {ALL_PROVIDERS}",
+    ),
+    disable_providers: Optional[str] = typer.Option(
+        None, "--disable-providers",
+        help="Comma-separated providers to disable (overrides config/defaults)",
     ),
     force_ghunt: bool = typer.Option(False, "--force-ghunt", help="Run GHunt even for non-Gmail"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run — no actual provider calls"),
@@ -87,12 +160,14 @@ def single(
     ))
 
     providers_list = providers.split(",") if providers else None
+    disable_list = disable_providers.split(",") if disable_providers else None
     row = InputRow(email=email, input_row_id=0)
 
     pipeline = EnrichmentPipeline(
         config=cfg,
         output_dir=out,
         providers_filter=providers_list,
+        disabled_providers=disable_list,
         force_ghunt=force_ghunt,
         dry_run=dry_run,
         proxy=proxy,
@@ -100,17 +175,17 @@ def single(
 
     result = asyncio.run(pipeline.process_single(row))
 
-    # Write output
     results = [result]
     summary = pipeline._build_summary(results, result.processed_at, result.processed_at)
     paths = pipeline.write_output(results, summary)
 
-    # Display result
     _print_result_table([result])
     console.print(f"\n[green]Output files:[/green]")
     for name, path in paths.items():
         console.print(f"  {name}: {path}")
 
+
+# ── batch ────────────────────────────────────────────────────────────────────
 
 @app.command()
 def batch(
@@ -121,19 +196,22 @@ def batch(
     config: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
     providers: Optional[str] = typer.Option(
         None, "--providers", "-p",
-        help="Comma-separated providers: ghunt,holehe",
+        help=f"Comma-separated providers to enable: {ALL_PROVIDERS}",
+    ),
+    disable_providers: Optional[str] = typer.Option(
+        None, "--disable-providers",
+        help="Comma-separated providers to disable",
     ),
     force_ghunt: bool = typer.Option(False, "--force-ghunt", help="Run GHunt even for non-Gmail"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run — validate input only"),
-    resume: bool = typer.Option(False, "--resume", help="Resume interrupted batch (skip already-processed)"),
+    resume: bool = typer.Option(False, "--resume", help="Resume interrupted batch"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="HTTP/SOCKS proxy URL"),
 ):
     """Enrich a batch of emails from CSV or XLSX."""
     cfg = load_config(config)
     log_dir = Path(out) / "logs"
-    logger = setup_logging(cfg.logging.level, log_dir)
+    setup_logging(cfg.logging.level, log_dir)
 
-    # Load input
     rows = load_input(input, email_column=email_column, sheet=sheet)
 
     console.print(Panel(
@@ -142,6 +220,7 @@ def batch(
         f"Input: {input}\n"
         f"Emails loaded: {len(rows)}\n"
         f"Providers: {providers or 'all enabled'}\n"
+        f"Disabled: {disable_providers or 'none'}\n"
         f"Resume: {resume}\n"
         f"Proxy: {proxy or 'none'}\n"
         f"Dry run: {dry_run}",
@@ -149,11 +228,13 @@ def batch(
     ))
 
     providers_list = providers.split(",") if providers else None
+    disable_list = disable_providers.split(",") if disable_providers else None
 
     pipeline = EnrichmentPipeline(
         config=cfg,
         output_dir=out,
         providers_filter=providers_list,
+        disabled_providers=disable_list,
         force_ghunt=force_ghunt,
         dry_run=dry_run,
         resume=resume,
@@ -161,18 +242,17 @@ def batch(
     )
 
     results, summary = asyncio.run(pipeline.process_batch(rows))
-
-    # Write output
     paths = pipeline.write_output(results, summary)
 
-    # Print summary
     _print_summary(summary)
-    _print_result_table(results[:20])  # First 20 rows
+    _print_result_table(results[:20])
 
     console.print(f"\n[green]Output files:[/green]")
     for name, path in paths.items():
         console.print(f"  {name}: {path}")
 
+
+# ── Output helpers ───────────────────────────────────────────────────────────
 
 def _print_result_table(results):
     """Print a rich table of results."""
@@ -182,8 +262,11 @@ def _print_result_table(results):
     table.add_column("Status", style="bold")
     table.add_column("GHunt", style="green")
     table.add_column("Holehe", style="blue")
-    table.add_column("Footprint", justify="right")
-    table.add_column("Identity", justify="right")
+    table.add_column("BB/Mai/Sher", style="magenta")
+    table.add_column("h8mail", style="red")
+    table.add_column("ER/Rep", style="cyan")
+    table.add_column("Phone", style="yellow")
+    table.add_column("Final", justify="right")
     table.add_column("Tier", style="bold")
 
     for r in results:
@@ -197,17 +280,54 @@ def _print_result_table(results):
             "Weak": "red", "No Signal": "dim",
         }.get(r.outreach_enrichment_tier, "white")
 
+        # GHunt
         ghunt_info = ""
         if r.ghunt_checked:
             ghunt_info = f"{'✓' if r.ghunt_success else '✗'}"
             if r.ghunt_display_name:
-                ghunt_info += f" {r.ghunt_display_name[:15]}"
+                ghunt_info += f" {r.ghunt_display_name[:12]}"
 
+        # Holehe
         holehe_info = ""
         if r.holehe_checked:
             holehe_info = f"{'✓' if r.holehe_success else '✗'}"
             if r.holehe_registered_services_count > 0:
-                holehe_info += f" {r.holehe_registered_services_count} svc"
+                holehe_info += f" {r.holehe_registered_services_count}svc"
+
+        # Blackbird / Maigret / Sherlock (combined)
+        parts = []
+        if r.blackbird_checked and r.blackbird_success:
+            bb_total = r.blackbird_email_profiles_count + r.blackbird_username_profiles_count
+            parts.append(f"BB:{bb_total}")
+        if r.maigret_checked and r.maigret_success:
+            parts.append(f"M:{r.maigret_profiles_count}")
+        if r.sherlock_checked and r.sherlock_success:
+            parts.append(f"S:{r.sherlock_profiles_count}")
+        profile_info = " ".join(parts) if parts else "—"
+
+        # h8mail
+        h8_info = ""
+        if r.h8mail_checked:
+            h8_info = f"{'✓' if r.h8mail_success else '✗'}"
+            if r.h8mail_breach_mentions_count > 0:
+                h8_info += f" {r.h8mail_breach_mentions_count}br"
+
+        # EmailRep
+        er_info = ""
+        if r.emailrep_checked:
+            er_info = f"{'✓' if r.emailrep_success else '✗'}"
+            if r.emailrep_reputation:
+                er_info += f" {r.emailrep_reputation[:4]}"
+
+        # Phone
+        phone_info = ""
+        if r.phone_extractor_checked:
+            if r.phone_candidate_best:
+                phone_info = f"✓ {r.phone_candidate_best[:12]}"
+            elif r.phone_candidates_count > 0:
+                phone_info = f"? {r.phone_candidates_count}"
+            else:
+                phone_info = "—"
 
         table.add_row(
             mask_email(r.email),
@@ -215,8 +335,11 @@ def _print_result_table(results):
             f"[{status_color}]{r.status}[/{status_color}]",
             ghunt_info,
             holehe_info,
-            str(r.email_footprint_score),
-            str(r.identity_confidence_score),
+            profile_info,
+            h8_info,
+            er_info,
+            phone_info,
+            str(r.final_enrichment_score),
             f"[{tier_color}]{r.outreach_enrichment_tier}[/{tier_color}]",
         )
 
@@ -232,9 +355,22 @@ def _print_summary(summary):
         f"[red]Failed: {summary.failed}[/red] | "
         f"Skipped: {summary.skipped}\n"
         f"GHunt: {summary.ghunt_successes}/{summary.ghunt_calls} | "
-        f"Holehe: {summary.holehe_successes}/{summary.holehe_calls}\n"
-        f"Avg Footprint: {summary.avg_footprint_score} | "
-        f"Avg Identity: {summary.avg_identity_score}\n"
+        f"Holehe: {summary.holehe_successes}/{summary.holehe_calls} | "
+        f"Blackbird: {summary.blackbird_successes}/{summary.blackbird_calls} | "
+        f"Maigret: {summary.maigret_successes}/{summary.maigret_calls}\n"
+        f"Sherlock: {summary.sherlock_successes}/{summary.sherlock_calls} | "
+        f"h8mail: {summary.h8mail_successes}/{summary.h8mail_calls} | "
+        f"Phone: {summary.phone_extractor_successes}/{summary.phone_extractor_calls}\n"
+        f"EmailRep: {summary.emailrep_successes}/{summary.emailrep_calls} | "
+        f"Mosint: {summary.mosint_successes}/{summary.mosint_calls} | "
+        f"Buster: {summary.buster_successes}/{summary.buster_calls}\n"
+        f"UserEnrich: {summary.user_enrichment_successes}/{summary.user_enrichment_calls} | "
+        f"EmailCrawlr: {summary.emailcrawlr_successes}/{summary.emailcrawlr_calls}\n"
+        f"Profiles discovered: {summary.total_profiles_discovered} | "
+        f"Phone candidates: {summary.total_phone_candidates}\n"
+        f"Avg Footprint: {summary.avg_footprint_score:.1f} | "
+        f"Avg Identity: {summary.avg_identity_score:.1f} | "
+        f"Avg Final: {summary.avg_final_score:.1f}\n"
         f"Tiers: {summary.tier_distribution}",
         title="📊 Run Summary",
     ))

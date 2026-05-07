@@ -63,6 +63,17 @@ class AppConfig(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=lambda: {
         "ghunt": ProviderConfig(),
         "holehe": ProviderConfig(),
+        "blackbird": ProviderConfig(enabled=True),
+        "maigret": ProviderConfig(enabled=True),
+        "sherlock": ProviderConfig(enabled=False),
+        "h8mail": ProviderConfig(enabled=True),
+        "phone_extractor": ProviderConfig(enabled=True),
+        # New providers
+        "emailrep": ProviderConfig(enabled=True, timeout_seconds=60),
+        "mosint": ProviderConfig(enabled=False, timeout_seconds=180),
+        "buster": ProviderConfig(enabled=False, timeout_seconds=180),
+        "user_email_enrichment": ProviderConfig(enabled=False, timeout_seconds=120),
+        "emailcrawlr": ProviderConfig(enabled=False, timeout_seconds=60),
     })
     batch: BatchConfig = Field(default_factory=BatchConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -82,6 +93,7 @@ class InputRow(BaseModel):
     claim_value: Optional[float] = None
     lead_score: Optional[float] = None
     tier: Optional[str] = None
+    phone: Optional[str] = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -92,6 +104,7 @@ class GHuntResult(BaseModel):
     success: bool = False
     display_name: Optional[str] = None
     gaia_id: Optional[str] = None
+    google_account_found: bool = False
     profile_photo_found: bool = False
     profile_photo_url: Optional[str] = None
     google_maps_reviews_found: bool = False
@@ -100,6 +113,7 @@ class GHuntResult(BaseModel):
     drive_public_found: bool = False
     raw_json_path: Optional[str] = None
     confidence_score: float = 0.0
+    error: Optional[str] = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -110,10 +124,168 @@ class HoleheResult(BaseModel):
     registered_services_list: list[str] = Field(default_factory=list)
     social_services_count: int = 0
     professional_services_count: int = 0
+    other_services_count: int = 0
     recovery_hints_count: int = 0
     raw_json_path: Optional[str] = None
     confidence_score: float = 0.0
+    error: Optional[str] = None
     raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class BlackbirdResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    email_profiles_count: int = 0
+    username_profiles_count: int = 0
+    profiles_list: list[str] = Field(default_factory=list)
+    report_path: Optional[str] = None
+    raw_json_path: Optional[str] = None
+    confidence_score: float = 0.0
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class MaigretResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    username_candidates: list[str] = Field(default_factory=list)
+    profiles_count: int = 0
+    profiles_list: list[str] = Field(default_factory=list)
+    report_path: Optional[str] = None
+    raw_json_path: Optional[str] = None
+    confidence_score: float = 0.0
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class SherlockResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    profiles_count: int = 0
+    profiles_list: list[str] = Field(default_factory=list)
+    raw_json_path: Optional[str] = None
+    confidence_score: float = 0.0
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class H8mailResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    breach_mentions_count: int = 0
+    sources_count: int = 0
+    sources_list: list[str] = Field(default_factory=list)
+    risk_score: float = 0.0
+    raw_json_path: Optional[str] = None
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class PhoneCandidate(BaseModel):
+    phone_number: str
+    source_url: str = ""
+    source_provider: str = ""
+    extraction_method: str = ""
+    confidence_score: int = 0
+    context_snippet: Optional[str] = None
+
+
+class PhoneExtractorResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    phone_candidates_found: bool = False
+    phone_candidates_count: int = 0
+    phone_candidates_list: list[PhoneCandidate] = Field(default_factory=list)
+    phone_candidate_best: Optional[str] = None
+    phone_candidate_source_url: Optional[str] = None
+    phone_candidate_source_provider: Optional[str] = None
+    phone_candidate_context: Optional[str] = None
+    phone_candidate_confidence_score: int = 0
+    phone_extraction_error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── New provider results (v0.2) ─────────────────────────────────────────────
+
+class EmailRepResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    reputation: str = ""  # "high", "medium", "low", "none"
+    suspicious: bool = False
+    references: int = 0
+    details_summary: str = ""
+    risk_score: float = 0.0  # 0..1
+    raw_json_path: Optional[str] = None
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class MosintResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    services_used: str = ""
+    findings_count: int = 0
+    social_signal: bool = False
+    breach_signal: bool = False
+    domain_signal: bool = False
+    raw_json_path: Optional[str] = None
+    confidence_score: float = 0.0
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class BusterResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    social_accounts_count: int = 0
+    social_accounts_list: list[str] = Field(default_factory=list)
+    found_links_count: int = 0
+    found_links_list: list[str] = Field(default_factory=list)
+    breach_count: int = 0
+    reverse_whois_domains: str = ""
+    generated_usernames: str = ""
+    work_email_candidates: str = ""
+    raw_json_path: Optional[str] = None
+    confidence_score: float = 0.0
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class UserEnrichmentResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    name: str = ""
+    avatar_url: str = ""
+    profiles: str = ""  # comma-separated
+    profiles_count: int = 0
+    raw_json_path: Optional[str] = None
+    confidence_score: float = 0.0
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmailCrawlrResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    social_accounts_count: int = 0
+    social_accounts_list: list[str] = Field(default_factory=list)
+    deliverability: str = ""
+    domain_emails_count: int = 0
+    raw_json_path: Optional[str] = None
+    confidence_score: float = 0.0
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Profile (for merge_profiles) ────────────────────────────────────────────
+
+class ProfileEntry(BaseModel):
+    """Unified profile found across providers."""
+    url: str
+    platform: str = ""
+    source_provider: str = ""
+    matched_by: str = ""  # email|username|name|domain
+    confidence: int = 0
 
 
 # ── Enrichment result ────────────────────────────────────────────────────────
@@ -140,11 +312,15 @@ class EnrichmentResult(BaseModel):
     lead_score: Optional[float] = None
     tier: Optional[str] = None
 
-    # GHunt
+    # Username candidates
+    username_candidates: str = ""
+
+    # ── GHunt ────────────────────────────────────────────────────────────
     ghunt_checked: bool = False
     ghunt_success: bool = False
     ghunt_display_name: Optional[str] = None
     ghunt_gaia_id: Optional[str] = None
+    ghunt_google_account_found: bool = False
     ghunt_profile_photo_found: bool = False
     ghunt_profile_photo_url: Optional[str] = None
     ghunt_google_maps_reviews_found: bool = False
@@ -153,21 +329,142 @@ class EnrichmentResult(BaseModel):
     ghunt_drive_public_found: bool = False
     ghunt_raw_json_path: Optional[str] = None
     ghunt_confidence_score: float = 0.0
+    ghunt_error: Optional[str] = None
 
-    # Holehe
+    # ── Holehe ───────────────────────────────────────────────────────────
     holehe_checked: bool = False
     holehe_success: bool = False
     holehe_registered_services_count: int = 0
-    holehe_registered_services_list: str = ""  # comma-separated for CSV compat
+    holehe_registered_services_list: str = ""
     holehe_social_services_count: int = 0
     holehe_professional_services_count: int = 0
-    holehe_recovery_hints_count: int = 0
+    holehe_other_services_count: int = 0
     holehe_raw_json_path: Optional[str] = None
     holehe_confidence_score: float = 0.0
+    holehe_error: Optional[str] = None
 
-    # Scoring
+    # ── Blackbird ────────────────────────────────────────────────────────
+    blackbird_checked: bool = False
+    blackbird_success: bool = False
+    blackbird_email_profiles_count: int = 0
+    blackbird_username_profiles_count: int = 0
+    blackbird_profiles_list: str = ""
+    blackbird_report_path: Optional[str] = None
+    blackbird_raw_json_path: Optional[str] = None
+    blackbird_confidence_score: float = 0.0
+    blackbird_error: Optional[str] = None
+
+    # ── Maigret ──────────────────────────────────────────────────────────
+    maigret_checked: bool = False
+    maigret_success: bool = False
+    maigret_username_candidates: str = ""
+    maigret_profiles_count: int = 0
+    maigret_profiles_list: str = ""
+    maigret_report_path: Optional[str] = None
+    maigret_raw_json_path: Optional[str] = None
+    maigret_confidence_score: float = 0.0
+    maigret_error: Optional[str] = None
+
+    # ── Sherlock ─────────────────────────────────────────────────────────
+    sherlock_checked: bool = False
+    sherlock_success: bool = False
+    sherlock_profiles_count: int = 0
+    sherlock_profiles_list: str = ""
+    sherlock_raw_json_path: Optional[str] = None
+    sherlock_confidence_score: float = 0.0
+    sherlock_error: Optional[str] = None
+
+    # ── h8mail ───────────────────────────────────────────────────────────
+    h8mail_checked: bool = False
+    h8mail_success: bool = False
+    h8mail_breach_mentions_count: int = 0
+    h8mail_sources_count: int = 0
+    h8mail_sources_list: str = ""
+    h8mail_risk_score: float = 0.0
+    h8mail_raw_json_path: Optional[str] = None
+    h8mail_error: Optional[str] = None
+
+    # ── Phone Extractor ──────────────────────────────────────────────────
+    phone_extractor_checked: bool = False
+    phone_candidates_found: bool = False
+    phone_candidates_count: int = 0
+    phone_candidates_list: str = ""
+    phone_candidate_best: Optional[str] = None
+    phone_candidate_source_url: Optional[str] = None
+    phone_candidate_source_provider: Optional[str] = None
+    phone_candidate_context: Optional[str] = None
+    phone_candidate_confidence_score: int = 0
+    phone_extraction_error: Optional[str] = None
+
+    # ── EmailRep ─────────────────────────────────────────────────────────
+    emailrep_checked: bool = False
+    emailrep_success: bool = False
+    emailrep_reputation: str = ""
+    emailrep_suspicious: bool = False
+    emailrep_references: int = 0
+    emailrep_details_summary: str = ""
+    emailrep_risk_score: float = 0.0
+    emailrep_raw_json_path: Optional[str] = None
+    emailrep_error: Optional[str] = None
+
+    # ── Mosint ───────────────────────────────────────────────────────────
+    mosint_checked: bool = False
+    mosint_success: bool = False
+    mosint_services_used: str = ""
+    mosint_findings_count: int = 0
+    mosint_social_signal: bool = False
+    mosint_breach_signal: bool = False
+    mosint_domain_signal: bool = False
+    mosint_raw_json_path: Optional[str] = None
+    mosint_confidence_score: float = 0.0
+    mosint_error: Optional[str] = None
+
+    # ── Buster ───────────────────────────────────────────────────────────
+    buster_checked: bool = False
+    buster_success: bool = False
+    buster_social_accounts_count: int = 0
+    buster_social_accounts_list: str = ""
+    buster_found_links_count: int = 0
+    buster_found_links_list: str = ""
+    buster_breach_count: int = 0
+    buster_reverse_whois_domains: str = ""
+    buster_generated_usernames: str = ""
+    buster_work_email_candidates: str = ""
+    buster_raw_json_path: Optional[str] = None
+    buster_confidence_score: float = 0.0
+    buster_error: Optional[str] = None
+
+    # ── User Email Enrichment ────────────────────────────────────────────
+    user_enrichment_checked: bool = False
+    user_enrichment_success: bool = False
+    user_enrichment_name: str = ""
+    user_enrichment_avatar_url: str = ""
+    user_enrichment_profiles: str = ""
+    user_enrichment_profiles_count: int = 0
+    user_enrichment_raw_json_path: Optional[str] = None
+    user_enrichment_confidence_score: float = 0.0
+    user_enrichment_error: Optional[str] = None
+
+    # ── EmailCrawlr ──────────────────────────────────────────────────────
+    emailcrawlr_checked: bool = False
+    emailcrawlr_success: bool = False
+    emailcrawlr_social_accounts_count: int = 0
+    emailcrawlr_social_accounts_list: str = ""
+    emailcrawlr_deliverability: str = ""
+    emailcrawlr_domain_emails_count: int = 0
+    emailcrawlr_raw_json_path: Optional[str] = None
+    emailcrawlr_confidence_score: float = 0.0
+    emailcrawlr_error: Optional[str] = None
+
+    # ── Scoring ──────────────────────────────────────────────────────────
     email_footprint_score: int = 0
     identity_confidence_score: int = 0
+    social_presence_score: int = 0
+    email_reputation_score: int = 0
+    deliverability_score: int = 0
+    provider_consensus_score: int = 0
+    conflict_risk_score: int = 0
+    final_enrichment_score: int = 0
     outreach_enrichment_tier: str = EnrichmentTier.no_signal.value
     manual_review_needed: bool = False
     enrichment_notes: str = ""
@@ -175,6 +472,8 @@ class EnrichmentResult(BaseModel):
 
     # Meta
     source_provider: str = ""
+    total_profiles_found: int = 0
+    merged_profiles_count: int = 0
 
 
 # ── Run summary ──────────────────────────────────────────────────────────────
@@ -188,11 +487,36 @@ class RunSummary(BaseModel):
     partial: int = 0
     failed: int = 0
     skipped: int = 0
+    # Per-provider stats
     ghunt_calls: int = 0
     ghunt_successes: int = 0
     holehe_calls: int = 0
     holehe_successes: int = 0
+    blackbird_calls: int = 0
+    blackbird_successes: int = 0
+    maigret_calls: int = 0
+    maigret_successes: int = 0
+    sherlock_calls: int = 0
+    sherlock_successes: int = 0
+    h8mail_calls: int = 0
+    h8mail_successes: int = 0
+    phone_extractor_calls: int = 0
+    phone_extractor_successes: int = 0
+    emailrep_calls: int = 0
+    emailrep_successes: int = 0
+    mosint_calls: int = 0
+    mosint_successes: int = 0
+    buster_calls: int = 0
+    buster_successes: int = 0
+    user_enrichment_calls: int = 0
+    user_enrichment_successes: int = 0
+    emailcrawlr_calls: int = 0
+    emailcrawlr_successes: int = 0
+    # Aggregates
     avg_footprint_score: float = 0.0
     avg_identity_score: float = 0.0
+    avg_final_score: float = 0.0
+    total_profiles_discovered: int = 0
+    total_phone_candidates: int = 0
     tier_distribution: dict[str, int] = Field(default_factory=dict)
     config_used: dict[str, Any] = Field(default_factory=dict)

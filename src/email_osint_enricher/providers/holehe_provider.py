@@ -14,14 +14,17 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from email_osint_enricher.providers.base import BaseProvider, ProviderContext
 from email_osint_enricher.schemas import HoleheResult
 from email_osint_enricher.scoring import SOCIAL_SERVICES, PROFESSIONAL_SERVICES
 
 logger = logging.getLogger("enricher")
 
 
-class HoleheProvider:
+class HoleheProvider(BaseProvider):
     """Wrapper around Holehe for email → registered-accounts OSINT."""
+
+    name = "holehe"
 
     def __init__(
         self,
@@ -33,6 +36,15 @@ class HoleheProvider:
         self.raw_output_dir = raw_output_dir
         self.proxy = proxy
         self._lib_available: Optional[bool] = None
+
+    async def should_run(self, context: ProviderContext) -> bool:
+        """Holehe запускается для всех email."""
+        return True
+
+    async def run(self, context: ProviderContext) -> HoleheResult:
+        """Run Holehe enrichment."""
+        self.proxy = self.proxy or context.proxy
+        return await self.enrich(context.email)
 
     def _check_library(self) -> bool:
         if self._lib_available is None:
@@ -60,7 +72,6 @@ class HoleheProvider:
             logger.error(f"Holehe error: {e}")
             result.success = False
 
-        # Provider confidence
         if result.success:
             if result.registered_services_count >= 5:
                 result.confidence_score = 0.9
@@ -100,14 +111,10 @@ class HoleheProvider:
                                 timeout=self.timeout,
                             )
                         )
-
                 results_raw = await asyncio.gather(*tasks, return_exceptions=True)
-
-                # Log individual module failures at debug level
-                for i, r in enumerate(results_raw):
+                for r in results_raw:
                     if isinstance(r, Exception):
                         logger.debug(f"Holehe module failed: {r}")
-
             finally:
                 await client.aclose()
 
@@ -162,18 +169,15 @@ class HoleheProvider:
         return result
 
     def _parse_modules_output(self, out: list[dict], result: HoleheResult) -> HoleheResult:
-        """Parse holehe module output list."""
         registered = []
         recovery_hints = 0
 
         for entry in out:
             if not isinstance(entry, dict):
                 continue
-            # holehe marks exists=True when the email is registered
             if entry.get("exists") is True:
                 name = entry.get("name", entry.get("domain", "unknown"))
                 registered.append(name)
-            # Recovery info
             if entry.get("phoneNumber") or entry.get("others"):
                 recovery_hints += 1
 
@@ -190,12 +194,10 @@ class HoleheProvider:
         return result
 
     def _parse_cli_text(self, text: str, result: HoleheResult) -> HoleheResult:
-        """Parse holehe CLI text output (--only-used shows lines with [+])."""
         registered = []
 
         for line in text.splitlines():
             line = line.strip()
-            # holehe output: [+] service_name
             if line.startswith("[+]"):
                 parts = line.replace("[+]", "").strip().split()
                 if parts:
@@ -213,8 +215,21 @@ class HoleheProvider:
 
         return result
 
+    def normalize_result(self, result: HoleheResult) -> dict:
+        return {
+            "holehe_checked": result.checked,
+            "holehe_success": result.success,
+            "holehe_registered_services_count": result.registered_services_count,
+            "holehe_registered_services_list": ", ".join(result.registered_services_list),
+            "holehe_social_services_count": result.social_services_count,
+            "holehe_professional_services_count": result.professional_services_count,
+            "holehe_other_services_count": result.other_services_count,
+            "holehe_raw_json_path": result.raw_json_path,
+            "holehe_confidence_score": result.confidence_score,
+            "holehe_error": result.error,
+        }
+
     def _save_raw(self, email: str, data: dict) -> Optional[str]:
-        """Save raw JSON output."""
         if not self.raw_output_dir:
             return None
         self.raw_output_dir.mkdir(parents=True, exist_ok=True)

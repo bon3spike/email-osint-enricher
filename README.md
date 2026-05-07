@@ -1,269 +1,210 @@
-# Email OSINT Enricher
+# 📧 Email OSINT Enricher
 
-Local OSINT enrichment tool for email lists. Takes a CSV/XLSX with email addresses and produces enriched output with public OSINT signals — digital footprint, identity confidence, and outreach scoring.
+Локальный CLI-инструмент для массового OSINT-обогащения email-списков.
+На вход — CSV/XLSX с email-ами, на выход — таблица со всеми найденными данными и скорингом.
 
-Built on top of two open-source OSINT frameworks:
-- **[GHunt](https://github.com/mxrch/GHunt)** — Google account OSINT (Gmail / Google Workspace enrichment)
-- **[Holehe](https://github.com/megadose/holehe)** — Email-to-registered-accounts OSINT (120+ services)
+**12 OSINT-провайдеров** • **8 метрик скоринга** • **CSV + XLSX + JSONL выход** • **Batch + Resume** • **Без API-ключей в базовой конфигурации**
 
-## ⚠️ Legal & Compliance Warning
+---
 
-**This tool is for lawful OSINT research only.**
-
-- Only queries publicly available data through GHunt and Holehe APIs
-- Does NOT perform hacking, password resets, credential stuffing, or scraping private data
-- Does NOT send notifications to target email addresses (Holehe uses password reset _check_ endpoints that don't trigger notifications)
-- The user is fully responsible for compliance with applicable laws (GDPR, CCPA, CFAA, etc.)
-- Rate limit responsibly — excessive querying may violate provider ToS
-- Do not use this tool for harassment, stalking, unauthorized surveillance, or any illegal purpose
-
-## What It Does
-
-1. **Reads** a CSV or XLSX file with an `email` column
-2. **Normalizes** emails (Gmail dot/plus normalization, domain classification)
-3. **Enriches** via GHunt (Google profiles, photos, YouTube, Maps, Calendar, Drive signals)
-4. **Enriches** via Holehe (registered accounts on 120+ services: social, professional, etc.)
-5. **Scores** each email: `email_footprint_score`, `identity_confidence_score`, `outreach_enrichment_tier`
-6. **Outputs** enriched CSV, XLSX, JSONL, run summary JSON, and errors CSV
-
-## What GHunt Does
-
-GHunt is a Google OSINT framework. For a given Gmail/Google Workspace email it can find:
-- Display name and GAIA ID
-- Profile photo
-- YouTube channel
-- Google Maps reviews
-- Public Google Calendar
-- Public Google Drive files
-- Fully async, JSON export
-
-**Requires authentication**: You must run `ghunt login` once to provide browser cookies. See [GHunt docs](https://github.com/mxrch/GHunt).
-
-## What Holehe Does
-
-Holehe checks if an email is registered on 120+ websites by using password reset / account recovery endpoints:
-- Twitter, Instagram, Facebook, Reddit, Discord, Spotify, etc.
-- GitHub, GitLab, StackOverflow, LinkedIn-like services
-- Does NOT notify the target email
-- Works on Python 3
-
-## Installation
+## 🚀 Быстрый старт
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_USER/email-osint-enricher.git
+# Клонирование и установка
+git clone https://github.com/bon3spike/email-osint-enricher.git
 cd email-osint-enricher
-
-# Install with all dependencies
-pip install -e ".[all,dev]"
-
-# Or install without OSINT providers (for testing/development)
 pip install -e ".[dev]"
 
-# Or install individual providers
-pip install -e ".[ghunt]"
-pip install -e ".[holehe]"
+# Один email
+email-osint-enricher single -e user@gmail.com
+
+# Пакетная обработка
+email-osint-enricher batch -i emails.csv -o output/
+
+# Просмотр всех провайдеров
+email-osint-enricher list-providers
 ```
 
-### GHunt Authentication
+## 📋 Требования
 
-GHunt requires Google cookies for authentication:
+- Python 3.10+
+- pip (или uv)
+- Для core-провайдеров: `ghunt`, `holehe`, `blackbird`, `maigret`, `sherlock`, `h8mail` — CLI-инструменты в PATH
+- Для опциональных провайдеров: см. таблицу ниже
+
+---
+
+## 🔍 Провайдеры
+
+### Core-провайдеры (включены по умолчанию)
+
+| # | Провайдер | Что делает | Что собирает |
+|---|-----------|-----------|--------------|
+| 1 | **GHunt** | Google/Gmail OSINT | Имя, Gaia ID, фото, YouTube, Maps отзывы, Calendar, Drive |
+| 2 | **Holehe** | Email → сервисы | Зарегистрированные аккаунты, разбивка social/professional |
+| 3 | **Blackbird** | Email + username поиск | Профили на 600+ платформах |
+| 4 | **Maigret** | Username OSINT (досье) | Глубокий поиск профилей по username-кандидатам |
+| 5 | **h8mail** | Breach/утечки | Упоминания в утечках, источники, risk_score |
+| 6 | **EmailRep** | Репутация email | reputation, suspicious, references, risk_score |
+| 7 | **Phone Extractor** | Извлечение телефонов | Парсит публичные URL-ы от других провайдеров |
+
+### Опциональные провайдеры (выключены по умолчанию)
+
+| # | Провайдер | Требует | Что собирает |
+|---|-----------|---------|--------------|
+| 8 | **Sherlock** | `sherlock` в PATH | Профили на 400+ сайтах (fallback для Maigret) |
+| 9 | **Mosint** | `mosint` Go-бинарник | social_signal, breach_signal, domain_signal |
+| 10 | **Buster** | `buster` в PATH | Соц. аккаунты, ссылки, reverse whois, usernames |
+| 11 | **User Email Enrichment** | NPM / `npx` | Имя, аватар, социальные профили |
+| 12 | **EmailCrawlr** | `EMAILCRAWLR_API_KEY` | Соц. аккаунты, deliverability, domain emails |
+
+### Управление провайдерами
 
 ```bash
-# Run the GHunt login flow
-ghunt login
+# Показать все провайдеры и их статус
+email-osint-enricher list-providers
 
-# This will guide you through providing browser cookies
-# Credentials are stored locally in ~/.ghunt/
+# Выбрать конкретные провайдеры
+email-osint-enricher single -e user@gmail.com -p ghunt,holehe,emailrep
+
+# Отключить провайдеры
+email-osint-enricher batch -i list.csv --disable-providers mosint,buster
+
+# Включить Sherlock (по умолчанию выключен)
+email-osint-enricher single -e user@gmail.com -p ghunt,holehe,sherlock
 ```
 
-### Configuration
+---
+
+## 🎯 Скоринг
+
+### 8 метрик (0–100 каждая)
+
+| Метрика | Описание |
+|---------|----------|
+| `email_footprint_score` | Общий цифровой след |
+| `identity_confidence_score` | Уверенность в идентификации личности |
+| `social_presence_score` | Присутствие в соцсетях и профессиональных платформах |
+| `email_reputation_score` | Репутация email (по EmailRep + breach данным) |
+| `deliverability_score` | Доставляемость (MX, тип домена, EmailRep) |
+| `provider_consensus_score` | Совпадения между провайдерами (cross-validation) |
+| `conflict_risk_score` | Риск конфликта данных (разные имена, слабые профили) |
+| `final_enrichment_score` | Итоговый взвешенный балл |
+
+### Формула итогового скора
+
+```
+final = 0.25×identity + 0.20×footprint + 0.15×social
+      + 0.15×reputation + 0.10×deliverability + 0.10×consensus
+      - 0.20×risk - 0.15×conflict
+```
+
+### Тиры
+
+| Tier | Порог | Действие |
+|------|-------|----------|
+| **Strong** | ≥70 | Персонализированный outreach |
+| **Medium** | ≥40 | Ручная верификация перед outreach |
+| **Weak** | ≥15 | Попробовать дополнительные провайдеры |
+| **No Signal** | <15 | Не приоритизировать |
+
+### Provider Consensus
+
+- +10 баллов: один и тот же URL найден 2+ провайдерами
+- +15 баллов: одна и та же платформа найдена 2+ провайдерами
+- Максимум 100
+
+### Conflict Risk
+
+- +30: имя из enrichment не совпадает с applicantName
+- +20: слишком много слабых профилей (≥5)
+- +15: разные имена из разных провайдеров
+- Максимум 100
+
+---
+
+## 📥 Вход / Выход
+
+### Вход
+
+CSV или XLSX с колонками:
+- `email` (обязательно)
+- `applicantName` (опционально — для name matching)
+- `applicantCountry` (опционально)
+- `applicantId`, `externalId`, `claim_value`, `lead_score`, `tier` (опционально — passthrough)
+
+### Выход
+
+```
+output/
+├── enriched_results.csv
+├── enriched_results.xlsx
+├── enriched_results.jsonl
+├── run_summary.json
+├── errors.json          # только ошибки
+├── logs/                # логи
+└── raw/                 # сырые JSON от каждого провайдера
+    ├── ghunt/
+    ├── holehe/
+    ├── emailrep/
+    └── ...
+```
+
+Каждая строка выхода содержит:
+- Все поля от 12 провайдеров
+- 8 скоров + tier + recommended_action
+- Объединённый список профилей (merged, deduplicated по URL)
+
+---
+
+## ⌨️ CLI
 
 ```bash
-# Copy example config
-cp config.yaml.example config.yaml
+# Полная справка
+email-osint-enricher --help
 
-# Edit as needed
-nano config.yaml
+# Один email
+email-osint-enricher single -e user@gmail.com -o output/
+
+# Пакетная обработка
+email-osint-enricher batch -i emails.csv -o output/
+
+# XLSX с выбором листа и колонки
+email-osint-enricher batch -i data.xlsx --sheet "Sheet1" --email-column "Email Address"
+
+# Resume после прерывания
+email-osint-enricher batch -i emails.csv --resume
+
+# Dry run (проверка без вызова провайдеров)
+email-osint-enricher batch -i emails.csv --dry-run
+
+# Force GHunt для non-Gmail
+email-osint-enricher single -e user@company.com --force-ghunt
+
+# Через прокси
+email-osint-enricher batch -i emails.csv --proxy socks5://127.0.0.1:9050
+
+# Список провайдеров
+email-osint-enricher list-providers
 ```
 
-## Usage
+---
 
-### Single Email
+## ⚙️ Конфигурация
 
-```bash
-# Enrich a single email
-python -m email_osint_enricher single --email test@gmail.com --out output/
-
-# Dry run (no actual API calls)
-python -m email_osint_enricher single --email test@gmail.com --dry-run
-
-# Only Holehe
-python -m email_osint_enricher single --email test@gmail.com --providers holehe
-```
-
-### Batch CSV
-
-```bash
-# Process a CSV file
-python -m email_osint_enricher batch --input leads.csv --email-column email --out output/
-
-# Custom email column name
-python -m email_osint_enricher batch --input leads.csv --email-column applicantEmail --out output/
-
-# Dry run — validate input, show what would be processed
-python -m email_osint_enricher batch --input leads.csv --email-column email --dry-run
-```
-
-### Batch XLSX
-
-```bash
-# Process an Excel file
-python -m email_osint_enricher batch --input leads.xlsx --email-column applicantEmail --out output/
-
-# Specific sheet
-python -m email_osint_enricher batch --input leads.xlsx --email-column email --sheet "Applicants Clean" --out output/
-```
-
-### Provider Selection
-
-```bash
-# Only Holehe (works for all emails)
-python -m email_osint_enricher batch --input leads.csv --email-column email --providers holehe
-
-# Only GHunt (automatically skips non-Gmail unless --force-ghunt)
-python -m email_osint_enricher batch --input leads.csv --email-column email --providers ghunt
-
-# Force GHunt for non-Gmail emails (e.g., Google Workspace domains)
-python -m email_osint_enricher batch --input leads.csv --email-column email --providers ghunt --force-ghunt
-```
-
-## Input Format
-
-CSV or XLSX with these columns:
-
-| Column | Required | Description |
-|--------|----------|-------------|
-| `email` | ✅ | Email address |
-| `applicantId` | ❌ | Internal ID |
-| `externalId` | ❌ | External reference |
-| `applicantName` | ❌ | Known name (used for identity matching) |
-| `applicantCountry` | ❌ | Known country (used for identity matching) |
-| `claim_value` | ❌ | Claim amount |
-| `lead_score` | ❌ | Existing lead score |
-| `tier` | ❌ | Existing tier classification |
-
-## Output Schema
-
-### enriched_results.csv / .xlsx / .jsonl
-
-**Base fields:**
-- `email` — Original email
-- `email_normalized` — Normalized (Gmail dots/plus removed)
-- `email_domain` — Domain part
-- `email_type` — `gmail` / `google_workspace` / `corporate` / `free_provider` / `unknown`
-- `input_row_id` — Row index from input file
-- `processed_at` — ISO timestamp
-- `status` — `success` / `partial` / `failed` / `skipped`
-- `error_message` — Error details if any
-
-**GHunt fields:**
-- `ghunt_checked` — Whether GHunt was attempted
-- `ghunt_success` — Whether GHunt returned data
-- `ghunt_display_name` — Google account display name
-- `ghunt_gaia_id` — Google GAIA ID
-- `ghunt_profile_photo_found` / `ghunt_profile_photo_url`
-- `ghunt_google_maps_reviews_found` / `ghunt_youtube_found` / `ghunt_calendar_public_found` / `ghunt_drive_public_found`
-- `ghunt_raw_json_path` — Path to raw JSON output
-- `ghunt_confidence_score` — Provider confidence (0–1)
-
-**Holehe fields:**
-- `holehe_checked` / `holehe_success`
-- `holehe_registered_services_count` — Number of services where email is registered
-- `holehe_registered_services_list` — Comma-separated service names
-- `holehe_social_services_count` — Social media services
-- `holehe_professional_services_count` — Professional/dev services
-- `holehe_recovery_hints_count` — Recovery info hints
-- `holehe_raw_json_path` — Path to raw JSON output
-- `holehe_confidence_score` — Provider confidence (0–1)
-
-**Scoring fields:**
-- `email_footprint_score` — 0–100 digital footprint score
-- `identity_confidence_score` — 0–100 identity confidence
-- `outreach_enrichment_tier` — `Strong` / `Medium` / `Weak` / `No Signal`
-- `manual_review_needed` — true/false
-- `enrichment_notes` — Summary of findings
-- `recommended_next_action` — Suggested next step
-
-### run_summary.json
-
-Aggregated statistics: totals, success/failure counts, provider stats, average scores, tier distribution.
-
-### errors.csv
-
-Rows that failed enrichment with error details.
-
-## Scoring Formula
-
-### email_footprint_score (0–100)
-
-| Signal | Points |
-|--------|--------|
-| GHunt: Google profile / display name found | +25 |
-| GHunt: profile photo found | +15 |
-| GHunt: YouTube / Maps / Calendar / Drive artifacts | +10 |
-| Holehe: 5+ registered services | +25 |
-| Holehe: 2–4 registered services | +15 |
-| Holehe: social media services found | +10 |
-| Holehe: professional/dev services found | +10 |
-
-Capped at 100.
-
-### identity_confidence_score (0–100)
-
-| Signal | Points |
-|--------|--------|
-| Display name found (GHunt) | +30 |
-| Google account data found | +20 |
-| 3+ registered services (Holehe) | +20 |
-| Corporate email domain | +10 |
-| Name matches applicantName | +10 |
-| Country signal matches applicantCountry | +10 |
-| Name/country conflict with applicant data | −20 |
-
-Capped at 0–100.
-
-### outreach_enrichment_tier
-
-| Tier | Condition |
-|------|-----------|
-| **Strong** | identity_confidence ≥ 70 OR footprint ≥ 70 |
-| **Medium** | best score 40–69 |
-| **Weak** | best score 15–39 |
-| **No Signal** | best score < 15 |
-
-### recommended_next_action
-
-| Tier | Action |
-|------|--------|
-| Strong | Use enriched identity for personalized outreach |
-| Medium | Manual verification before outreach |
-| Weak | Try additional enrichment provider |
-| No Signal | Do not prioritize unless claim value is high |
-
-## Configuration
-
-See `config.yaml.example`:
+Скопируйте `config.yaml.example` → `config.yaml`:
 
 ```yaml
 providers:
   ghunt:
     enabled: true
     timeout_seconds: 120
-    force: false
-  holehe:
+  emailrep:
     enabled: true
-    timeout_seconds: 120
+    timeout_seconds: 60
+  mosint:
+    enabled: false  # нужен Go-бинарник
+  # ...
 
 batch:
   concurrency: 3
@@ -275,66 +216,88 @@ output:
   write_xlsx: true
   write_csv: true
   write_jsonl: true
-
-logging:
-  level: INFO
-  mask_emails: true
 ```
 
-## Project Structure
+### Переменные окружения
+
+```bash
+# Опционально — для EmailRep (больше лимитов)
+export EMAILREP_API_KEY=your_key
+
+# Обязательно для EmailCrawlr
+export EMAILCRAWLR_API_KEY=your_key
+```
+
+---
+
+## 🛡️ Безопасность
+
+- ⛔ Никаких паролей/хэшей в выходных файлах (автоматическая санитизация)
+- 🔒 Email-ы маскируются в логах
+- ✅ Подпроцессные провайдеры (Mosint/Buster/UE) не ломают pipeline если не установлены
+- 📜 Только публичные данные — lawful OSINT
+
+---
+
+## 🧪 Тесты
+
+```bash
+# Запуск всех тестов
+pytest tests/ -v
+
+# Или через pip/uv
+python -m pytest tests/ -v
+```
+
+111 тестов покрывают:
+- Все 12 провайдеров в реестре
+- Email-утилиты (нормализация, классификация, маскировка)
+- Загрузку CSV/XLSX
+- Username генерацию (включая Cyrillic)
+- Все 8 метрик скоринга
+- Profile merging и dedup
+- Graceful failure для отсутствующих бинарников
+- Мокированный EmailRep (high/suspicious)
+- Санитизацию паролей/хэшей (Buster)
+- Provider consensus / conflict scoring
+- Отключённые провайдеры не влияют на скор
+
+---
+
+## 📂 Структура проекта
 
 ```
 email_osint_enricher/
-├── README.md
-├── pyproject.toml
+├── src/email_osint_enricher/
+│   ├── __init__.py, __main__.py
+│   ├── cli.py              # CLI (single, batch, list-providers)
+│   ├── config.py            # Загрузка config.yaml
+│   ├── schemas.py           # Pydantic модели (12 провайдеров, scoring, summary)
+│   ├── pipeline.py          # Оркестрация провайдеров
+│   ├── scoring.py           # 8 метрик + merge_profiles
+│   ├── email_utils.py       # Нормализация, MX, Google Workspace
+│   ├── username_utils.py    # Генерация username-кандидатов
+│   ├── input_loader.py      # CSV/XLSX загрузка
+│   ├── output_writer.py     # CSV/XLSX/JSONL запись
+│   ├── logging_utils.py     # Настройка логирования
+│   └── providers/
+│       ├── base.py          # BaseProvider, ProviderContext
+│       ├── ghunt_provider.py
+│       ├── holehe_provider.py
+│       ├── blackbird_provider.py
+│       ├── maigret_provider.py
+│       ├── sherlock_provider.py
+│       ├── h8mail_provider.py
+│       ├── phone_extractor.py
+│       ├── emailrep_provider.py
+│       ├── mosint_provider.py
+│       ├── buster_provider.py
+│       ├── user_email_enrichment_provider.py
+│       └── emailcrawlr_provider.py
+├── tests/                   # 111 тестов
 ├── config.yaml.example
 ├── .env.example
-├── src/
-│   └── email_osint_enricher/
-│       ├── __init__.py
-│       ├── __main__.py
-│       ├── cli.py              # Typer CLI (single / batch commands)
-│       ├── config.py           # YAML + env config loading
-│       ├── schemas.py          # Pydantic models
-│       ├── input_loader.py     # CSV / XLSX reader
-│       ├── output_writer.py    # CSV / XLSX / JSONL writer
-│       ├── email_utils.py      # Normalization, classification, masking
-│       ├── scoring.py          # Footprint + identity scoring
-│       ├── pipeline.py         # Main enrichment pipeline
-│       ├── logging_utils.py    # Rich logging setup
-│       └── providers/
-│           ├── __init__.py
-│           ├── ghunt_provider.py   # GHunt wrapper (library + CLI fallback)
-│           └── holehe_provider.py  # Holehe wrapper (library + CLI fallback)
-├── tests/
-│   ├── test_email_utils.py
-│   ├── test_scoring.py
-│   └── test_input_loader.py
-└── examples/
-    └── sample_input.csv
-```
-
-## Provider Behavior
-
-- **GHunt** runs only for `@gmail.com` / `@googlemail.com` emails (or detected Google Workspace). Use `--force-ghunt` to override.
-- **Holehe** runs for all emails.
-- If one provider fails, the row is marked `partial` — it does not stop the batch.
-- Raw JSON outputs are saved in `output/raw/ghunt/` and `output/raw/holehe/`.
-
-## Limitations
-
-- GHunt requires valid Google cookies — they expire and need re-authentication
-- Holehe results depend on service availability — some checks may be rate-limited
-- This tool does NOT verify email deliverability (use a dedicated email verification service for that)
-- Google Workspace detection is heuristic — some corporate domains may not be identified
-- Country matching is limited to what providers return
-- The tool does NOT perform automated outreach
-
-## Running Tests
-
-```bash
-pip install -e ".[dev]"
-pytest tests/ -v
+└── pyproject.toml
 ```
 
 ## License
