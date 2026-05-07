@@ -1,6 +1,6 @@
 """Scoring logic for email enrichment results.
 
-Учитывает все 12 провайдеров. Включает:
+Учитывает все 10 провайдеров. Включает:
   - email_footprint_score
   - identity_confidence_score
   - social_presence_score
@@ -28,8 +28,6 @@ from email_osint_enricher.schemas import (
     PhoneExtractorResult,
     EmailRepResult,
     MosintResult,
-    BusterResult,
-    UserEnrichmentResult,
     EmailCrawlrResult,
     InputRow,
     ProfileEntry,
@@ -74,8 +72,6 @@ def merge_profiles(
     blackbird: BlackbirdResult | None = None,
     maigret: MaigretResult | None = None,
     sherlock: SherlockResult | None = None,
-    buster: BusterResult | None = None,
-    user_enrichment: UserEnrichmentResult | None = None,
     emailcrawlr: EmailCrawlrResult | None = None,
 ) -> list[ProfileEntry]:
     """Merge profiles from all providers, deduplicate by normalized URL."""
@@ -118,18 +114,6 @@ def merge_profiles(
         for url in sherlock.profiles_list:
             _add(url, "sherlock", "username")
 
-    if buster and buster.success:
-        for url in buster.social_accounts_list:
-            _add(url, "buster", "email", 60)
-        for url in buster.found_links_list:
-            _add(url, "buster", "email", 30)
-
-    if user_enrichment and user_enrichment.success and user_enrichment.profiles:
-        for url in user_enrichment.profiles.split(","):
-            url = url.strip()
-            if url.startswith("http"):
-                _add(url, "user_enrichment", "email", 55)
-
     if emailcrawlr and emailcrawlr.success:
         for url in emailcrawlr.social_accounts_list:
             _add(url, "emailcrawlr", "email", 55)
@@ -148,7 +132,6 @@ def compute_footprint_score(
     h8mail: H8mailResult | None = None,
     phone: PhoneExtractorResult | None = None,
     mosint: MosintResult | None = None,
-    buster: BusterResult | None = None,
 ) -> int:
     score = 0
 
@@ -195,10 +178,6 @@ def compute_footprint_score(
     if mosint and mosint.success and mosint.findings_count >= 2:
         score += 5
 
-    if buster and buster.success:
-        if buster.social_accounts_count >= 2 or buster.found_links_count >= 3:
-            score += 5
-
     return min(score, 100)
 
 
@@ -212,7 +191,6 @@ def compute_identity_confidence(
     sherlock: SherlockResult | None = None,
     h8mail: H8mailResult | None = None,
     phone: PhoneExtractorResult | None = None,
-    user_enrichment: UserEnrichmentResult | None = None,
 ) -> int:
     score = 0
 
@@ -250,11 +228,6 @@ def compute_identity_confidence(
         else:
             score -= 15
 
-    if user_enrichment and user_enrichment.success and user_enrichment.name:
-        score += 5
-        if row.applicantName and _names_match(user_enrichment.name, row.applicantName):
-            score += 5
-
     if phone and phone.phone_candidate_best and phone.phone_candidate_confidence_score >= 50:
         score += 5
 
@@ -269,8 +242,6 @@ def compute_social_presence_score(
     blackbird: BlackbirdResult | None = None,
     maigret: MaigretResult | None = None,
     sherlock: SherlockResult | None = None,
-    buster: BusterResult | None = None,
-    user_enrichment: UserEnrichmentResult | None = None,
     emailcrawlr: EmailCrawlrResult | None = None,
     mosint: MosintResult | None = None,
 ) -> int:
@@ -300,12 +271,6 @@ def compute_social_presence_score(
     elif total_profiles >= 5:
         score += 15
     elif total_profiles >= 2:
-        score += 10
-
-    if buster and buster.success and buster.social_accounts_count >= 2:
-        score += 10
-
-    if user_enrichment and user_enrichment.success and user_enrichment.profiles_count >= 2:
         score += 10
 
     if emailcrawlr and emailcrawlr.success and emailcrawlr.social_accounts_count >= 2:
@@ -414,7 +379,6 @@ def compute_provider_consensus_score(merged_profiles: list[ProfileEntry]) -> int
 def compute_conflict_risk_score(
     row: InputRow,
     ghunt: GHuntResult,
-    user_enrichment: UserEnrichmentResult | None = None,
     merged_profiles: list[ProfileEntry] | None = None,
 ) -> int:
     """Conflict risk score (0-100). Higher = more conflict/risk."""
@@ -423,8 +387,6 @@ def compute_conflict_risk_score(
 
     if ghunt.display_name:
         names_found.append(ghunt.display_name)
-    if user_enrichment and user_enrichment.success and user_enrichment.name:
-        names_found.append(user_enrichment.name)
 
     # applicantName conflicts with enriched name
     if row.applicantName and names_found:
@@ -522,8 +484,6 @@ def score_result(
     phone: PhoneExtractorResult | None = None,
     emailrep: EmailRepResult | None = None,
     mosint: MosintResult | None = None,
-    buster: BusterResult | None = None,
-    user_enrichment: UserEnrichmentResult | None = None,
     emailcrawlr: EmailCrawlrResult | None = None,
     has_mx: bool = True,
 ) -> EnrichmentResult:
@@ -532,20 +492,20 @@ def score_result(
     # Merge profiles
     merged = merge_profiles(
         blackbird=blackbird, maigret=maigret, sherlock=sherlock,
-        buster=buster, user_enrichment=user_enrichment, emailcrawlr=emailcrawlr,
+        emailcrawlr=emailcrawlr,
     )
     result.merged_profiles_count = len(merged)
 
     # Sub-scores
     result.email_footprint_score = compute_footprint_score(
-        ghunt, holehe, blackbird, maigret, sherlock, h8mail, phone, mosint, buster,
+        ghunt, holehe, blackbird, maigret, sherlock, h8mail, phone, mosint,
     )
     result.identity_confidence_score = compute_identity_confidence(
         ghunt, holehe, row, EmailType(result.email_type),
-        blackbird, maigret, sherlock, h8mail, phone, user_enrichment,
+        blackbird, maigret, sherlock, h8mail, phone,
     )
     result.social_presence_score = compute_social_presence_score(
-        holehe, blackbird, maigret, sherlock, buster, user_enrichment, emailcrawlr, mosint,
+        holehe, blackbird, maigret, sherlock, emailcrawlr, mosint,
     )
     result.email_reputation_score = compute_email_reputation_score(emailrep, h8mail, emailcrawlr)
     result.deliverability_score = compute_deliverability_score(
@@ -553,7 +513,7 @@ def score_result(
     )
     result.provider_consensus_score = compute_provider_consensus_score(merged)
     result.conflict_risk_score = compute_conflict_risk_score(
-        row, ghunt, user_enrichment, merged,
+        row, ghunt, merged,
     )
 
     # Risk from emailrep
@@ -603,10 +563,6 @@ def score_result(
         notes.append(f"ER: {emailrep.reputation}")
     if mosint and mosint.success:
         notes.append(f"Mos: {mosint.findings_count}f")
-    if buster and buster.success:
-        notes.append(f"Bus: {buster.social_accounts_count}soc")
-    if user_enrichment and user_enrichment.success:
-        notes.append(f"UE: {user_enrichment.name or 'N/A'}")
     if emailcrawlr and emailcrawlr.success:
         notes.append(f"EC: {emailcrawlr.social_accounts_count}soc")
     if phone and phone.phone_candidates_found:
@@ -623,10 +579,6 @@ def score_result(
         total += maigret.profiles_count
     if sherlock and sherlock.success:
         total += sherlock.profiles_count
-    if buster and buster.success:
-        total += buster.social_accounts_count
-    if user_enrichment and user_enrichment.success:
-        total += user_enrichment.profiles_count
     result.total_profiles_found = total
 
     # Source providers
@@ -639,8 +591,6 @@ def score_result(
         ("h8mail", h8mail.checked if h8mail else False),
         ("emailrep", emailrep.checked if emailrep else False),
         ("mosint", mosint.checked if mosint else False),
-        ("buster", buster.checked if buster else False),
-        ("user_enrichment", user_enrichment.checked if user_enrichment else False),
         ("emailcrawlr", emailcrawlr.checked if emailcrawlr else False),
         ("phone_extractor", phone.checked if phone else False),
     ]:

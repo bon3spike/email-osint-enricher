@@ -9,10 +9,8 @@
   6. h8mail    — breach/risk signal
   7. EmailRep  — email reputation/risk (API)
   8. Mosint    — email OSINT (Go subprocess)
-  9. Buster    — email reconnaissance (subprocess)
-  10. User Email Enrichment — reverse email lookup (NPM subprocess)
-  11. EmailCrawlr — email intelligence (API)
-  12. phone_extractor — публичные телефоны из найденных профилей (always last)
+  9. EmailCrawlr — email intelligence (API)
+  10. phone_extractor — публичные телефоны из найденных профилей (always last)
 """
 
 from __future__ import annotations
@@ -49,8 +47,6 @@ from email_osint_enricher.providers.h8mail_provider import H8mailProvider
 from email_osint_enricher.providers.phone_extractor import PhoneExtractorProvider
 from email_osint_enricher.providers.emailrep_provider import EmailRepProvider
 from email_osint_enricher.providers.mosint_provider import MosintProvider
-from email_osint_enricher.providers.buster_provider import BusterProvider
-from email_osint_enricher.providers.user_email_enrichment_provider import UserEmailEnrichmentProvider
 from email_osint_enricher.providers.emailcrawlr_provider import EmailCrawlrProvider
 from email_osint_enricher.schemas import (
     AppConfig,
@@ -65,8 +61,6 @@ from email_osint_enricher.schemas import (
     PhoneExtractorResult,
     EmailRepResult,
     MosintResult,
-    BusterResult,
-    UserEnrichmentResult,
     EmailCrawlrResult,
     InputRow,
     ProcessingStatus,
@@ -164,10 +158,7 @@ class EnrichmentPipeline:
                 providers[name] = EmailRepProvider(timeout=timeout, raw_output_dir=raw_dir)
             elif name == "mosint":
                 providers[name] = MosintProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "buster":
-                providers[name] = BusterProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "user_email_enrichment":
-                providers[name] = UserEmailEnrichmentProvider(timeout=timeout, raw_output_dir=raw_dir)
+
             elif name == "emailcrawlr":
                 providers[name] = EmailCrawlrProvider(timeout=timeout, raw_output_dir=raw_dir)
 
@@ -236,8 +227,6 @@ class EnrichmentPipeline:
         phone_res = PhoneExtractorResult()
         emailrep_res = EmailRepResult()
         mosint_res = MosintResult()
-        buster_res = BusterResult()
-        user_enrichment_res = UserEnrichmentResult()
         emailcrawlr_res = EmailCrawlrResult()
 
         # ── Resume check ────────────────────────────────────────────────
@@ -352,25 +341,7 @@ class EnrichmentPipeline:
                 logger.info(f"Running Mosint for {email_display}")
                 mosint_res = await self._run_with_retry(prov.run, context, "mosint")
 
-        # 9. Buster
-        if "buster" in self._providers:
-            prov = self._providers["buster"]
-            if await prov.should_run(context):
-                logger.info(f"Running Buster for {email_display}")
-                buster_res = await self._run_with_retry(prov.run, context, "buster")
-                if buster_res.social_accounts_list:
-                    context.profiles_found.extend(buster_res.social_accounts_list)
-                if buster_res.found_links_list:
-                    context.profiles_found.extend(buster_res.found_links_list)
-
-        # 10. User Email Enrichment
-        if "user_email_enrichment" in self._providers:
-            prov = self._providers["user_email_enrichment"]
-            if await prov.should_run(context):
-                logger.info(f"Running User Email Enrichment for {email_display}")
-                user_enrichment_res = await self._run_with_retry(prov.run, context, "user_email_enrichment")
-
-        # 11. EmailCrawlr
+        # 9. EmailCrawlr
         if "emailcrawlr" in self._providers:
             prov = self._providers["emailcrawlr"]
             if await prov.should_run(context):
@@ -482,32 +453,6 @@ class EnrichmentPipeline:
         result.mosint_confidence_score = mosint_res.confidence_score
         result.mosint_error = mosint_res.error
 
-        # Buster
-        result.buster_checked = buster_res.checked
-        result.buster_success = buster_res.success
-        result.buster_social_accounts_count = buster_res.social_accounts_count
-        result.buster_social_accounts_list = ", ".join(buster_res.social_accounts_list)
-        result.buster_found_links_count = buster_res.found_links_count
-        result.buster_found_links_list = ", ".join(buster_res.found_links_list)
-        result.buster_breach_count = buster_res.breach_count
-        result.buster_reverse_whois_domains = buster_res.reverse_whois_domains
-        result.buster_generated_usernames = buster_res.generated_usernames
-        result.buster_work_email_candidates = buster_res.work_email_candidates
-        result.buster_raw_json_path = buster_res.raw_json_path
-        result.buster_confidence_score = buster_res.confidence_score
-        result.buster_error = buster_res.error
-
-        # User Email Enrichment
-        result.user_enrichment_checked = user_enrichment_res.checked
-        result.user_enrichment_success = user_enrichment_res.success
-        result.user_enrichment_name = user_enrichment_res.name
-        result.user_enrichment_avatar_url = user_enrichment_res.avatar_url
-        result.user_enrichment_profiles = user_enrichment_res.profiles
-        result.user_enrichment_profiles_count = user_enrichment_res.profiles_count
-        result.user_enrichment_raw_json_path = user_enrichment_res.raw_json_path
-        result.user_enrichment_confidence_score = user_enrichment_res.confidence_score
-        result.user_enrichment_error = user_enrichment_res.error
-
         # EmailCrawlr
         result.emailcrawlr_checked = emailcrawlr_res.checked
         result.emailcrawlr_success = emailcrawlr_res.success
@@ -537,8 +482,8 @@ class EnrichmentPipeline:
         all_results = [
             ghunt_res, holehe_res, blackbird_res, maigret_res,
             sherlock_res, h8mail_res, phone_res,
-            emailrep_res, mosint_res, buster_res,
-            user_enrichment_res, emailcrawlr_res,
+            emailrep_res, mosint_res,
+            emailcrawlr_res,
         ]
         checked = [r for r in all_results if r.checked]
         successes = [r for r in checked if r.success]
@@ -562,8 +507,6 @@ class EnrichmentPipeline:
             phone=phone_res if phone_res.checked else None,
             emailrep=emailrep_res if emailrep_res.checked else None,
             mosint=mosint_res if mosint_res.checked else None,
-            buster=buster_res if buster_res.checked else None,
-            user_enrichment=user_enrichment_res if user_enrichment_res.checked else None,
             emailcrawlr=emailcrawlr_res if emailcrawlr_res.checked else None,
         )
 
@@ -572,8 +515,8 @@ class EnrichmentPipeline:
     async def _run_with_retry(self, coro_fn, context, provider: str):
         """Run a provider coroutine with retries and exponential backoff."""
         from email_osint_enricher.schemas import (
-            EmailRepResult, MosintResult, BusterResult,
-            UserEnrichmentResult, EmailCrawlrResult,
+            EmailRepResult, MosintResult,
+            EmailCrawlrResult,
         )
 
         last_exc = None
@@ -606,8 +549,6 @@ class EnrichmentPipeline:
                 "phone_extractor": PhoneExtractorResult(checked=True, success=False, phone_extraction_error=str(e)),
                 "emailrep": EmailRepResult(checked=True, success=False, error=str(e)),
                 "mosint": MosintResult(checked=True, success=False, error=str(e)),
-                "buster": BusterResult(checked=True, success=False, error=str(e)),
-                "user_email_enrichment": UserEnrichmentResult(checked=True, success=False, error=str(e)),
                 "emailcrawlr": EmailCrawlrResult(checked=True, success=False, error=str(e)),
             }
             return empty_results.get(provider, GHuntResult(checked=True, success=False))
@@ -779,14 +720,6 @@ class EnrichmentPipeline:
                 summary.mosint_calls += 1
             if r.mosint_success:
                 summary.mosint_successes += 1
-            if r.buster_checked:
-                summary.buster_calls += 1
-            if r.buster_success:
-                summary.buster_successes += 1
-            if r.user_enrichment_checked:
-                summary.user_enrichment_calls += 1
-            if r.user_enrichment_success:
-                summary.user_enrichment_successes += 1
             if r.emailcrawlr_checked:
                 summary.emailcrawlr_calls += 1
             if r.emailcrawlr_success:

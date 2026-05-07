@@ -10,8 +10,6 @@ from email_osint_enricher.providers.h8mail_provider import H8mailProvider
 from email_osint_enricher.providers.phone_extractor import PhoneExtractorProvider
 from email_osint_enricher.providers.emailrep_provider import EmailRepProvider
 from email_osint_enricher.providers.mosint_provider import MosintProvider
-from email_osint_enricher.providers.buster_provider import BusterProvider
-from email_osint_enricher.providers.user_email_enrichment_provider import UserEmailEnrichmentProvider
 from email_osint_enricher.providers.emailcrawlr_provider import EmailCrawlrProvider
 
 # Реестр всех провайдеров (порядок = порядок выполнения в pipeline)
@@ -24,8 +22,6 @@ PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "h8mail": H8mailProvider,
     "emailrep": EmailRepProvider,
     "mosint": MosintProvider,
-    "buster": BusterProvider,
-    "user_email_enrichment": UserEmailEnrichmentProvider,
     "emailcrawlr": EmailCrawlrProvider,
     "phone_extractor": PhoneExtractorProvider,  # always last — uses profiles from all
 }
@@ -40,8 +36,6 @@ PROVIDER_META: dict[str, dict] = {
     "h8mail":               {"default_enabled": True,  "requires_api_key": False, "binary": "h8mail"},
     "emailrep":             {"default_enabled": True,  "requires_api_key": False, "binary": None, "api_key_env": "EMAILREP_API_KEY"},
     "mosint":               {"default_enabled": False, "requires_api_key": False, "binary": "mosint"},
-    "buster":               {"default_enabled": False, "requires_api_key": False, "binary": "buster"},
-    "user_email_enrichment":{"default_enabled": False, "requires_api_key": False, "binary": "user-email-enrichment"},
     "emailcrawlr":          {"default_enabled": False, "requires_api_key": True,  "binary": None, "api_key_env": "EMAILCRAWLR_API_KEY"},
     "phone_extractor":      {"default_enabled": True,  "requires_api_key": False, "binary": None},
 }
@@ -51,6 +45,6 @@ __all__ = [
     "GHuntProvider", "HoleheProvider", "BlackbirdProvider",
     "MaigretProvider", "SherlockProvider", "H8mailProvider",
     "PhoneExtractorProvider", "EmailRepProvider", "MosintProvider",
-    "BusterProvider", "UserEmailEnrichmentProvider", "EmailCrawlrProvider",
+    "EmailCrawlrProvider",
     "PROVIDER_REGISTRY", "PROVIDER_META",
 ]

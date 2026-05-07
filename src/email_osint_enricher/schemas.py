@@ -71,8 +71,6 @@ class AppConfig(BaseModel):
         # New providers
         "emailrep": ProviderConfig(enabled=True, timeout_seconds=60),
         "mosint": ProviderConfig(enabled=False, timeout_seconds=180),
-        "buster": ProviderConfig(enabled=False, timeout_seconds=180),
-        "user_email_enrichment": ProviderConfig(enabled=False, timeout_seconds=120),
         "emailcrawlr": ProviderConfig(enabled=False, timeout_seconds=60),
     })
     batch: BatchConfig = Field(default_factory=BatchConfig)
@@ -234,34 +232,8 @@ class MosintResult(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
-class BusterResult(BaseModel):
-    checked: bool = False
-    success: bool = False
-    social_accounts_count: int = 0
-    social_accounts_list: list[str] = Field(default_factory=list)
-    found_links_count: int = 0
-    found_links_list: list[str] = Field(default_factory=list)
-    breach_count: int = 0
-    reverse_whois_domains: str = ""
-    generated_usernames: str = ""
-    work_email_candidates: str = ""
-    raw_json_path: Optional[str] = None
-    confidence_score: float = 0.0
-    error: Optional[str] = None
-    raw: dict[str, Any] = Field(default_factory=dict)
 
 
-class UserEnrichmentResult(BaseModel):
-    checked: bool = False
-    success: bool = False
-    name: str = ""
-    avatar_url: str = ""
-    profiles: str = ""  # comma-separated
-    profiles_count: int = 0
-    raw_json_path: Optional[str] = None
-    confidence_score: float = 0.0
-    error: Optional[str] = None
-    raw: dict[str, Any] = Field(default_factory=dict)
 
 
 class EmailCrawlrResult(BaseModel):
@@ -419,32 +391,6 @@ class EnrichmentResult(BaseModel):
     mosint_confidence_score: float = 0.0
     mosint_error: Optional[str] = None
 
-    # ── Buster ───────────────────────────────────────────────────────────
-    buster_checked: bool = False
-    buster_success: bool = False
-    buster_social_accounts_count: int = 0
-    buster_social_accounts_list: str = ""
-    buster_found_links_count: int = 0
-    buster_found_links_list: str = ""
-    buster_breach_count: int = 0
-    buster_reverse_whois_domains: str = ""
-    buster_generated_usernames: str = ""
-    buster_work_email_candidates: str = ""
-    buster_raw_json_path: Optional[str] = None
-    buster_confidence_score: float = 0.0
-    buster_error: Optional[str] = None
-
-    # ── User Email Enrichment ────────────────────────────────────────────
-    user_enrichment_checked: bool = False
-    user_enrichment_success: bool = False
-    user_enrichment_name: str = ""
-    user_enrichment_avatar_url: str = ""
-    user_enrichment_profiles: str = ""
-    user_enrichment_profiles_count: int = 0
-    user_enrichment_raw_json_path: Optional[str] = None
-    user_enrichment_confidence_score: float = 0.0
-    user_enrichment_error: Optional[str] = None
-
     # ── EmailCrawlr ──────────────────────────────────────────────────────
     emailcrawlr_checked: bool = False
     emailcrawlr_success: bool = False
@@ -506,10 +452,6 @@ class RunSummary(BaseModel):
     emailrep_successes: int = 0
     mosint_calls: int = 0
     mosint_successes: int = 0
-    buster_calls: int = 0
-    buster_successes: int = 0
-    user_enrichment_calls: int = 0
-    user_enrichment_successes: int = 0
     emailcrawlr_calls: int = 0
     emailcrawlr_successes: int = 0
     # Aggregates

@@ -19,8 +19,8 @@ from email_osint_enricher.scoring import (
 from email_osint_enricher.schemas import (
     GHuntResult, HoleheResult, BlackbirdResult, MaigretResult,
     SherlockResult, H8mailResult, PhoneExtractorResult,
-    EmailRepResult, MosintResult, BusterResult,
-    UserEnrichmentResult, EmailCrawlrResult,
+    EmailRepResult, MosintResult,
+    EmailCrawlrResult,
     EnrichmentResult, EnrichmentTier, EmailType, InputRow,
     ProfileEntry,
 )
@@ -347,8 +347,6 @@ class TestScoreResult:
         hm = H8mailResult(success=True, breach_mentions_count=2)
         er = EmailRepResult(success=True, reputation="high", references=5)
         mos = MosintResult(success=True, findings_count=3, social_signal=True)
-        bus = BusterResult(success=True, social_accounts_count=3)
-        ue = UserEnrichmentResult(success=True, name="John Doe", profiles_count=2)
         ec = EmailCrawlrResult(success=True, social_accounts_count=2,
                                 deliverability="true")
         row = InputRow(email="test@gmail.com", applicantName="John Doe")
@@ -356,8 +354,8 @@ class TestScoreResult:
         result = score_result(
             r, g, h, row,
             blackbird=bb, maigret=m, sherlock=s, h8mail=hm,
-            emailrep=er, mosint=mos, buster=bus,
-            user_enrichment=ue, emailcrawlr=ec,
+            emailrep=er, mosint=mos,
+            emailcrawlr=ec,
         )
         assert result.email_footprint_score >= 70
         assert result.identity_confidence_score >= 50
@@ -378,8 +376,7 @@ class TestScoreResult:
         result1 = score_result(r.model_copy(), g, h, row)
         # Score with unchecked providers (not run)
         mos = MosintResult(checked=False, success=False)
-        bus = BusterResult(checked=False, success=False)
-        result2 = score_result(r.model_copy(), g, h, row, mosint=mos, buster=bus)
+        result2 = score_result(r.model_copy(), g, h, row, mosint=mos)
         assert result1.email_footprint_score == result2.email_footprint_score
         assert result1.identity_confidence_score == result2.identity_confidence_score
 

@@ -1,4 +1,4 @@
-"""Tests for new providers (v0.2): EmailRep, Mosint, Buster, UserEnrichment, EmailCrawlr."""
+"""Tests for new providers (v0.2): EmailRep, Mosint, EmailCrawlr."""
 
 import asyncio
 import json
@@ -9,8 +9,6 @@ import pytest
 from email_osint_enricher.providers.base import ProviderContext
 from email_osint_enricher.providers.emailrep_provider import EmailRepProvider
 from email_osint_enricher.providers.mosint_provider import MosintProvider
-from email_osint_enricher.providers.buster_provider import BusterProvider
-from email_osint_enricher.providers.user_email_enrichment_provider import UserEmailEnrichmentProvider
 from email_osint_enricher.providers.emailcrawlr_provider import EmailCrawlrProvider
 from email_osint_enricher.scoring import merge_profiles
 from email_osint_enricher.schemas import BlackbirdResult, MaigretResult, ProfileEntry
@@ -115,56 +113,6 @@ class TestMosintProvider:
         assert norm["mosint_social_signal"] is True
 
 
-# ── Buster tests ─────────────────────────────────────────────────────────────
-
-class TestBusterProvider:
-
-    @pytest.mark.asyncio
-    async def test_binary_not_found(self):
-        """Missing binary should fail gracefully."""
-        p = BusterProvider(command="buster_nonexistent_binary_12345")
-        result = await p.run(_ctx())
-        assert result.checked is True
-        assert result.success is False
-        assert result.error == "binary_not_found"
-
-    def test_sanitize_removes_passwords(self):
-        p = BusterProvider()
-        data = {
-            "social_accounts": ["twitter.com/test"],
-            "breaches": [
-                {"source": "leak1", "password": "secret123", "hash": "abc123"},
-            ],
-            "links": [],
-        }
-        sanitized = p._sanitize(data)
-        assert "password" not in json.dumps(sanitized)
-        assert "hash" not in json.dumps(sanitized)
-        assert "social_accounts" in sanitized
-
-
-# ── UserEmailEnrichment tests ────────────────────────────────────────────────
-
-class TestUserEmailEnrichmentProvider:
-
-    @pytest.mark.asyncio
-    async def test_binary_not_found(self):
-        """Missing binary and npx should fail gracefully."""
-        with patch("shutil.which", return_value=None):
-            p = UserEmailEnrichmentProvider(command="nonexistent_ue_12345")
-            result = await p.run(_ctx())
-            assert result.checked is True
-            assert result.success is False
-            assert result.error == "binary_not_found"
-
-    def test_normalize_result(self):
-        p = UserEmailEnrichmentProvider()
-        from email_osint_enricher.schemas import UserEnrichmentResult
-        r = UserEnrichmentResult(checked=True, success=True, name="John Doe",
-                                  profiles_count=3, confidence_score=0.8)
-        norm = p.normalize_result(r)
-        assert norm["user_enrichment_name"] == "John Doe"
-        assert norm["user_enrichment_profiles_count"] == 3
 
 
 # ── EmailCrawlr tests ───────────────────────────────────────────────────────

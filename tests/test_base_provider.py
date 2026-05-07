@@ -39,7 +39,7 @@ class TestProviderRegistry:
         expected = {
             "ghunt", "holehe", "blackbird", "maigret", "sherlock",
             "h8mail", "phone_extractor",
-            "emailrep", "mosint", "buster", "user_email_enrichment", "emailcrawlr",
+            "emailrep", "mosint", "emailcrawlr",
         }
         assert set(PROVIDER_REGISTRY.keys()) == expected
 

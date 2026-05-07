@@ -94,9 +94,7 @@ ghunt login
 |---|-----------|---------|--------------|
 | 8 | **Sherlock** | ✅ уже установлен | Профили на 400+ сайтах (fallback для Maigret) |
 | 9 | **Mosint** | `mosint` Go-бинарник | social_signal, breach_signal, domain_signal |
-| 10 | **Buster** | `buster` в PATH | Соц. аккаунты, ссылки, reverse whois, usernames |
-| 11 | **User Email Enrichment** | NPM / `npx` | Имя, аватар, социальные профили |
-| 12 | **EmailCrawlr** | `EMAILCRAWLR_API_KEY` | Соц. аккаунты, deliverability, domain emails |
+| 10 | **EmailCrawlr** | `EMAILCRAWLR_API_KEY` | Соц. аккаунты, deliverability, domain emails |
 
 ### Управление провайдерами
 
@@ -108,7 +106,7 @@ email-osint-enricher list-providers
 email-osint-enricher single -e user@gmail.com -p ghunt,holehe,emailrep
 
 # Отключить провайдеры
-email-osint-enricher batch -i list.csv --disable-providers mosint,buster
+email-osint-enricher batch -i list.csv --disable-providers mosint
 
 # Включить Sherlock (по умолчанию выключен)
 email-osint-enricher single -e user@gmail.com -p ghunt,holehe,sherlock
@@ -185,7 +183,7 @@ email-osint-enricher batch -i data.xlsx --sheet "Sheet1" --email-column "Email"
 email-osint-enricher batch -i emails.csv --resume    # продолжить после прерывания
 email-osint-enricher batch -i emails.csv --dry-run   # проверка без запуска
 email-osint-enricher single -e user@corp.com --force-ghunt  # GHunt для non-Gmail
-email-osint-enricher batch -i emails.csv --disable-providers mosint,buster
+email-osint-enricher batch -i emails.csv --disable-providers mosint
 ```
 
 ---

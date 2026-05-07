@@ -33,7 +33,7 @@ ALL_PROVIDERS = ",".join(PROVIDER_REGISTRY.keys())
 
 app = typer.Typer(
     name="email-osint-enricher",
-    help="Email OSINT enrichment tool — 12 providers, scored output.",
+    help="Email OSINT enrichment tool — 10 providers, scored output.",
     add_completion=False,
 )
 console = Console()
@@ -363,8 +363,6 @@ def _print_summary(summary):
         f"Phone: {summary.phone_extractor_successes}/{summary.phone_extractor_calls}\n"
         f"EmailRep: {summary.emailrep_successes}/{summary.emailrep_calls} | "
         f"Mosint: {summary.mosint_successes}/{summary.mosint_calls} | "
-        f"Buster: {summary.buster_successes}/{summary.buster_calls}\n"
-        f"UserEnrich: {summary.user_enrichment_successes}/{summary.user_enrichment_calls} | "
         f"EmailCrawlr: {summary.emailcrawlr_successes}/{summary.emailcrawlr_calls}\n"
         f"Profiles discovered: {summary.total_profiles_discovered} | "
         f"Phone candidates: {summary.total_phone_candidates}\n"

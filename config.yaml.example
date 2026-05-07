@@ -43,15 +43,7 @@ providers:
     timeout_seconds: 180
     command: mosint
 
-  buster:
-    enabled: false   # Requires buster Python tool in PATH
-    timeout_seconds: 180
-    command: buster
 
-  user_email_enrichment:
-    enabled: false   # Requires user-email-enrichment NPM package or npx
-    timeout_seconds: 120
-    command: user-email-enrichment
 
   emailcrawlr:
     enabled: false   # Requires EMAILCRAWLR_API_KEY
