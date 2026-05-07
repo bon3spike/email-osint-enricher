@@ -1,6 +1,6 @@
 """Scoring logic for email enrichment results.
 
-Учитывает все 10 провайдеров. Включает:
+Учитывает все 8 провайдеров. Включает:
   - email_footprint_score
   - identity_confidence_score
   - social_presence_score
@@ -19,12 +19,10 @@ from email_osint_enricher.schemas import (
     EnrichmentResult,
     EnrichmentTier,
     EmailType,
-    GHuntResult,
     HoleheResult,
     BlackbirdResult,
     MaigretResult,
     SherlockResult,
-    H8mailResult,
     PhoneExtractorResult,
     EmailRepResult,
     MosintResult,
@@ -124,53 +122,40 @@ def merge_profiles(
 # ── Sub-scores ───────────────────────────────────────────────────────────────
 
 def compute_footprint_score(
-    ghunt: GHuntResult,
     holehe: HoleheResult,
     blackbird: BlackbirdResult | None = None,
     maigret: MaigretResult | None = None,
     sherlock: SherlockResult | None = None,
-    h8mail: H8mailResult | None = None,
     phone: PhoneExtractorResult | None = None,
     mosint: MosintResult | None = None,
 ) -> int:
     score = 0
 
-    if ghunt.success and ghunt.display_name:
-        score += 25
-    if ghunt.profile_photo_found:
-        score += 15
-    if any([ghunt.youtube_found, ghunt.google_maps_reviews_found,
-            ghunt.calendar_public_found, ghunt.drive_public_found]):
-        score += 10
-
     if holehe.registered_services_count >= 5:
-        score += 15
+        score += 20
     elif holehe.registered_services_count >= 2:
-        score += 10
+        score += 12
     if holehe.social_services_count > 0:
-        score += 10
+        score += 15
     if holehe.professional_services_count > 0:
-        score += 10
+        score += 15
 
     if blackbird and blackbird.success:
         total = blackbird.email_profiles_count + blackbird.username_profiles_count
         if total >= 5:
-            score += 15
+            score += 20
         elif total >= 2:
-            score += 10
+            score += 12
         elif total >= 1:
             score += 5
 
     if maigret and maigret.success and maigret.profiles_count >= 3:
-        score += 10
+        score += 15
     elif maigret and maigret.success and maigret.profiles_count >= 1:
-        score += 5
+        score += 8
 
     if sherlock and sherlock.success and sherlock.profiles_count >= 3:
-        score += 5
-
-    if h8mail and h8mail.success and h8mail.breach_mentions_count >= 1:
-        score += 5
+        score += 10
 
     if phone and phone.phone_candidates_found and phone.phone_candidate_confidence_score >= 50:
         score += 5
@@ -182,32 +167,25 @@ def compute_footprint_score(
 
 
 def compute_identity_confidence(
-    ghunt: GHuntResult,
     holehe: HoleheResult,
     row: InputRow,
     email_type: EmailType,
     blackbird: BlackbirdResult | None = None,
     maigret: MaigretResult | None = None,
     sherlock: SherlockResult | None = None,
-    h8mail: H8mailResult | None = None,
     phone: PhoneExtractorResult | None = None,
 ) -> int:
     score = 0
 
-    if ghunt.display_name:
-        score += 25
-    if ghunt.success and ghunt.gaia_id:
-        score += 15
-
     if holehe.registered_services_count >= 3:
-        score += 15
+        score += 20
     elif holehe.registered_services_count >= 1:
-        score += 5
+        score += 8
 
     if blackbird and blackbird.success and blackbird.email_profiles_count >= 2:
-        score += 10
+        score += 15
     elif blackbird and blackbird.success and blackbird.email_profiles_count >= 1:
-        score += 5
+        score += 8
 
     username_profiles = 0
     if maigret and maigret.success:
@@ -215,24 +193,15 @@ def compute_identity_confidence(
     if sherlock and sherlock.success:
         username_profiles += sherlock.profiles_count
     if username_profiles >= 5:
-        score += 10
+        score += 15
     elif username_profiles >= 2:
-        score += 5
+        score += 8
 
     if email_type == EmailType.corporate:
         score += 10
 
-    if row.applicantName and ghunt.display_name:
-        if _names_match(ghunt.display_name, row.applicantName):
-            score += 10
-        else:
-            score -= 15
-
     if phone and phone.phone_candidate_best and phone.phone_candidate_confidence_score >= 50:
-        score += 5
-
-    if h8mail and h8mail.success and h8mail.breach_mentions_count >= 3:
-        score += 5
+        score += 10
 
     return max(0, min(score, 100))
 
@@ -284,7 +253,6 @@ def compute_social_presence_score(
 
 def compute_email_reputation_score(
     emailrep: EmailRepResult | None = None,
-    h8mail: H8mailResult | None = None,
     emailcrawlr: EmailCrawlrResult | None = None,
 ) -> int:
     """Email reputation score (0-100). Higher = better reputation."""
@@ -299,12 +267,6 @@ def compute_email_reputation_score(
             score += 10
         elif emailrep.references >= 1:
             score += 5
-
-    if h8mail and h8mail.success:
-        if h8mail.breach_mentions_count >= 5:
-            score -= 10
-        elif h8mail.breach_mentions_count >= 1:
-            score -= 5
 
     if emailcrawlr and emailcrawlr.success:
         if emailcrawlr.deliverability in ("true", True, "yes"):
@@ -370,34 +332,15 @@ def compute_provider_consensus_score(merged_profiles: list[ProfileEntry]) -> int
     multi_platform = sum(1 for providers in platform_providers.values() if len(providers) >= 2)
     score += min(multi_platform * 15, 45)
 
-    # Same name from multiple providers (checked in score_result)
-    # This is handled separately
-
     return min(score, 100)
 
 
 def compute_conflict_risk_score(
     row: InputRow,
-    ghunt: GHuntResult,
     merged_profiles: list[ProfileEntry] | None = None,
 ) -> int:
     """Conflict risk score (0-100). Higher = more conflict/risk."""
     score = 0
-    names_found: list[str] = []
-
-    if ghunt.display_name:
-        names_found.append(ghunt.display_name)
-
-    # applicantName conflicts with enriched name
-    if row.applicantName and names_found:
-        conflicts = sum(1 for n in names_found if not _names_match(n, row.applicantName))
-        if conflicts > 0:
-            score += 30
-
-    # Multiple different names found
-    if len(names_found) >= 2:
-        if not _names_match(names_found[0], names_found[1]):
-            score += 15
 
     # Too many weak/ambiguous profiles
     if merged_profiles:
@@ -474,13 +417,11 @@ def get_recommended_action(tier: EnrichmentTier) -> str:
 
 def score_result(
     result: EnrichmentResult,
-    ghunt: GHuntResult,
     holehe: HoleheResult,
     row: InputRow,
     blackbird: BlackbirdResult | None = None,
     maigret: MaigretResult | None = None,
     sherlock: SherlockResult | None = None,
-    h8mail: H8mailResult | None = None,
     phone: PhoneExtractorResult | None = None,
     emailrep: EmailRepResult | None = None,
     mosint: MosintResult | None = None,
@@ -498,23 +439,21 @@ def score_result(
 
     # Sub-scores
     result.email_footprint_score = compute_footprint_score(
-        ghunt, holehe, blackbird, maigret, sherlock, h8mail, phone, mosint,
+        holehe, blackbird, maigret, sherlock, phone, mosint,
     )
     result.identity_confidence_score = compute_identity_confidence(
-        ghunt, holehe, row, EmailType(result.email_type),
-        blackbird, maigret, sherlock, h8mail, phone,
+        holehe, row, EmailType(result.email_type),
+        blackbird, maigret, sherlock, phone,
     )
     result.social_presence_score = compute_social_presence_score(
         holehe, blackbird, maigret, sherlock, emailcrawlr, mosint,
     )
-    result.email_reputation_score = compute_email_reputation_score(emailrep, h8mail, emailcrawlr)
+    result.email_reputation_score = compute_email_reputation_score(emailrep, emailcrawlr)
     result.deliverability_score = compute_deliverability_score(
         EmailType(result.email_type), has_mx, emailrep, emailcrawlr,
     )
     result.provider_consensus_score = compute_provider_consensus_score(merged)
-    result.conflict_risk_score = compute_conflict_risk_score(
-        row, ghunt, merged,
-    )
+    result.conflict_risk_score = compute_conflict_risk_score(row, merged)
 
     # Risk from emailrep
     risk = emailrep.risk_score if emailrep and emailrep.success else 0.0
@@ -547,8 +486,6 @@ def score_result(
 
     # Build notes
     notes = []
-    if ghunt.success:
-        notes.append(f"GHunt: name={ghunt.display_name or 'N/A'}")
     if holehe.success:
         notes.append(f"Holehe: {holehe.registered_services_count} svc")
     if blackbird and blackbird.success:
@@ -557,8 +494,6 @@ def score_result(
         notes.append(f"Mai: {maigret.profiles_count}")
     if sherlock and sherlock.success:
         notes.append(f"Sher: {sherlock.profiles_count}")
-    if h8mail and h8mail.success:
-        notes.append(f"h8: {h8mail.breach_mentions_count}br")
     if emailrep and emailrep.success:
         notes.append(f"ER: {emailrep.reputation}")
     if mosint and mosint.success:
@@ -584,11 +519,10 @@ def score_result(
     # Source providers
     providers = []
     for name, checked in [
-        ("ghunt", ghunt.checked), ("holehe", holehe.checked),
+        ("holehe", holehe.checked),
         ("blackbird", blackbird.checked if blackbird else False),
         ("maigret", maigret.checked if maigret else False),
         ("sherlock", sherlock.checked if sherlock else False),
-        ("h8mail", h8mail.checked if h8mail else False),
         ("emailrep", emailrep.checked if emailrep else False),
         ("mosint", mosint.checked if mosint else False),
         ("emailcrawlr", emailcrawlr.checked if emailcrawlr else False),

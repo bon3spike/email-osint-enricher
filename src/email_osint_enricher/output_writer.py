@@ -20,12 +20,6 @@ OUTPUT_FIELDS = [
     # Input passthrough
     "applicantId", "externalId", "applicantName", "applicantCountry",
     "claim_value", "lead_score", "tier",
-    # GHunt
-    "ghunt_checked", "ghunt_success", "ghunt_display_name", "ghunt_gaia_id",
-    "ghunt_profile_photo_found", "ghunt_profile_photo_url",
-    "ghunt_google_maps_reviews_found", "ghunt_youtube_found",
-    "ghunt_calendar_public_found", "ghunt_drive_public_found",
-    "ghunt_raw_json_path", "ghunt_confidence_score",
     # Holehe
     "holehe_checked", "holehe_success",
     "holehe_registered_services_count", "holehe_registered_services_list",

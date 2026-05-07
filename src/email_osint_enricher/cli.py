@@ -33,7 +33,7 @@ ALL_PROVIDERS = ",".join(PROVIDER_REGISTRY.keys())
 
 app = typer.Typer(
     name="email-osint-enricher",
-    help="Email OSINT enrichment tool — 10 providers, scored output.",
+    help="Email OSINT enrichment tool — 8 providers, scored output.",
     add_completion=False,
 )
 console = Console()
@@ -133,7 +133,6 @@ def single(
         None, "--disable-providers",
         help="Comma-separated providers to disable (overrides config/defaults)",
     ),
-    force_ghunt: bool = typer.Option(False, "--force-ghunt", help="Run GHunt even for non-Gmail"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run — no actual provider calls"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="HTTP/SOCKS proxy URL"),
 ):
@@ -168,7 +167,6 @@ def single(
         output_dir=out,
         providers_filter=providers_list,
         disabled_providers=disable_list,
-        force_ghunt=force_ghunt,
         dry_run=dry_run,
         proxy=proxy,
     )
@@ -202,13 +200,25 @@ def batch(
         None, "--disable-providers",
         help="Comma-separated providers to disable",
     ),
-    force_ghunt: bool = typer.Option(False, "--force-ghunt", help="Run GHunt even for non-Gmail"),
+    concurrency: Optional[int] = typer.Option(
+        None, "--concurrency", "-j",
+        help="Number of emails to process in parallel (default: from config, usually 3)",
+    ),
+    delay: Optional[float] = typer.Option(
+        None, "--delay",
+        help="Delay in seconds between emails (default: from config, usually 1.5)",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run — validate input only"),
     resume: bool = typer.Option(False, "--resume", help="Resume interrupted batch"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="HTTP/SOCKS proxy URL"),
 ):
     """Enrich a batch of emails from CSV or XLSX."""
     cfg = load_config(config)
+    # Override batch settings from CLI flags
+    if concurrency is not None:
+        cfg.batch.concurrency = concurrency
+    if delay is not None:
+        cfg.batch.delay_seconds = delay
     log_dir = Path(out) / "logs"
     setup_logging(cfg.logging.level, log_dir)
 
@@ -235,7 +245,6 @@ def batch(
         output_dir=out,
         providers_filter=providers_list,
         disabled_providers=disable_list,
-        force_ghunt=force_ghunt,
         dry_run=dry_run,
         resume=resume,
         proxy=proxy,
@@ -260,10 +269,8 @@ def _print_result_table(results):
     table.add_column("Email", style="cyan", max_width=30)
     table.add_column("Type", style="dim")
     table.add_column("Status", style="bold")
-    table.add_column("GHunt", style="green")
     table.add_column("Holehe", style="blue")
     table.add_column("BB/Mai/Sher", style="magenta")
-    table.add_column("h8mail", style="red")
     table.add_column("ER/Rep", style="cyan")
     table.add_column("Phone", style="yellow")
     table.add_column("Final", justify="right")
@@ -279,13 +286,6 @@ def _print_result_table(results):
             "Strong": "green", "Medium": "yellow",
             "Weak": "red", "No Signal": "dim",
         }.get(r.outreach_enrichment_tier, "white")
-
-        # GHunt
-        ghunt_info = ""
-        if r.ghunt_checked:
-            ghunt_info = f"{'✓' if r.ghunt_success else '✗'}"
-            if r.ghunt_display_name:
-                ghunt_info += f" {r.ghunt_display_name[:12]}"
 
         # Holehe
         holehe_info = ""
@@ -304,13 +304,6 @@ def _print_result_table(results):
         if r.sherlock_checked and r.sherlock_success:
             parts.append(f"S:{r.sherlock_profiles_count}")
         profile_info = " ".join(parts) if parts else "—"
-
-        # h8mail
-        h8_info = ""
-        if r.h8mail_checked:
-            h8_info = f"{'✓' if r.h8mail_success else '✗'}"
-            if r.h8mail_breach_mentions_count > 0:
-                h8_info += f" {r.h8mail_breach_mentions_count}br"
 
         # EmailRep
         er_info = ""
@@ -333,10 +326,8 @@ def _print_result_table(results):
             mask_email(r.email),
             r.email_type,
             f"[{status_color}]{r.status}[/{status_color}]",
-            ghunt_info,
             holehe_info,
             profile_info,
-            h8_info,
             er_info,
             phone_info,
             str(r.final_enrichment_score),
@@ -354,12 +345,10 @@ def _print_summary(summary):
         f"[yellow]Partial: {summary.partial}[/yellow] | "
         f"[red]Failed: {summary.failed}[/red] | "
         f"Skipped: {summary.skipped}\n"
-        f"GHunt: {summary.ghunt_successes}/{summary.ghunt_calls} | "
         f"Holehe: {summary.holehe_successes}/{summary.holehe_calls} | "
         f"Blackbird: {summary.blackbird_successes}/{summary.blackbird_calls} | "
         f"Maigret: {summary.maigret_successes}/{summary.maigret_calls}\n"
         f"Sherlock: {summary.sherlock_successes}/{summary.sherlock_calls} | "
-        f"h8mail: {summary.h8mail_successes}/{summary.h8mail_calls} | "
         f"Phone: {summary.phone_extractor_successes}/{summary.phone_extractor_calls}\n"
         f"EmailRep: {summary.emailrep_successes}/{summary.emailrep_calls} | "
         f"Mosint: {summary.mosint_successes}/{summary.mosint_calls} | "

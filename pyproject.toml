@@ -24,9 +24,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "dnspython>=2.4",
     # Bundled OSINT providers
-    "ghunt>=2.0",
     "holehe>=1.61",
-    "h8mail>=2.5",
     "sherlock-project>=0.14",
     "maigret>=0.4",
     # Phone / web scraping

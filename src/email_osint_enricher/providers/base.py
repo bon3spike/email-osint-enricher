@@ -37,7 +37,7 @@ class ProviderContext(BaseModel):
     personal_website_urls: list[str] = Field(default_factory=list)
 
     # Флаги
-    force_ghunt: bool = False
+
     is_google_email: bool = False
     is_google_workspace: bool = False
 

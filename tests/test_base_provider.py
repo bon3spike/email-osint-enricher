@@ -16,7 +16,6 @@ class TestProviderContext:
         assert ctx.email_normalized == ""
         assert ctx.username_candidates == []
         assert ctx.profiles_found == []
-        assert ctx.force_ghunt is False
         assert ctx.is_google_email is False
 
     def test_context_with_profiles(self):
@@ -37,8 +36,8 @@ class TestProviderContext:
 class TestProviderRegistry:
     def test_all_providers_registered(self):
         expected = {
-            "ghunt", "holehe", "blackbird", "maigret", "sherlock",
-            "h8mail", "phone_extractor",
+            "holehe", "blackbird", "maigret", "sherlock",
+            "phone_extractor",
             "emailrep", "mosint", "emailcrawlr",
         }
         assert set(PROVIDER_REGISTRY.keys()) == expected

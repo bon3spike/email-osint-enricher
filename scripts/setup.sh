@@ -51,7 +51,7 @@ info "Установка email-osint-enricher + все OSINT-провайдер�
 pip install -e ".[dev]" || {
     fail "Ошибка установки. Попробуй:"
     echo "  pip install -e . --no-deps"
-    echo "  pip install ghunt holehe h8mail sherlock-project"
+    echo "  pip install holehe sherlock-project"
     echo "  pip install maigret  # требует libcairo2-dev"
     exit 1
 }
@@ -89,9 +89,7 @@ check_tool() {
 }
 
 check_tool "email-osint-enricher" "email-osint-enricher"
-check_tool "GHunt"               "ghunt"
 check_tool "Holehe"              "holehe"
-check_tool "h8mail"              "h8mail"
 check_tool "Maigret"             "maigret"
 check_tool "Sherlock"            "sherlock"
 
@@ -114,7 +112,4 @@ echo "  Быстрый старт:"
 echo "    email-osint-enricher list-providers"
 echo "    email-osint-enricher single -e user@gmail.com"
 echo "    email-osint-enricher batch -i emails.csv -o output/"
-echo ""
-echo "  GHunt требует одноразовую авторизацию:"
-echo "    ghunt login"
 echo "═══════════════════════════════════════════════════"

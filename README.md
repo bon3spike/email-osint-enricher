@@ -3,7 +3,7 @@
 Локальный CLI-инструмент для массового OSINT-обогащения email-списков.
 На вход — CSV/XLSX с email-ами, на выход — таблица со всеми найденными данными и скорингом.
 
-**12 OSINT-провайдеров** • **8 метрик скоринга** • **CSV + XLSX + JSONL выход** • **Batch + Resume** • **Всё в одной репе**
+**8 OSINT-провайдеров** • **8 метрик скоринга** • **CSV + XLSX + JSONL выход** • **Batch + Resume** • **Всё в одной репе**
 
 ---
 
@@ -50,15 +50,6 @@ email-osint-enricher list-providers
 pytest tests/ -v
 ```
 
-### GHunt — одноразовая авторизация:
-
-```bash
-ghunt login
-# Он попросит Google cookies из браузера (SID, SSID, APISID, SAPISID, HSID)
-# Достать: расширение EditThisCookie на accounts.google.com
-# Делается один раз, потом работает автоматически
-```
-
 ---
 
 ## 📋 Требования
@@ -69,7 +60,7 @@ ghunt login
 - Git (для submodules)
 
 Все OSINT-тулзы устанавливаются автоматически через pip:
-- `ghunt`, `holehe`, `h8mail`, `maigret`, `sherlock-project` — как pip-зависимости
+- `holehe`, `maigret`, `sherlock-project` — как pip-зависимости
 - `blackbird` — как git submodule в `vendor/blackbird/`
 
 ---
@@ -80,21 +71,19 @@ ghunt login
 
 | # | Провайдер | Что делает | Что собирает |
 |---|-----------|-----------|--------------|
-| 1 | **GHunt** | Google/Gmail OSINT | Имя, Gaia ID, фото, YouTube, Maps отзывы, Calendar, Drive |
-| 2 | **Holehe** | Email → сервисы | Зарегистрированные аккаунты, разбивка social/professional |
-| 3 | **Blackbird** | Email + username поиск | Профили на 600+ платформах |
-| 4 | **Maigret** | Username OSINT (досье) | Глубокий поиск профилей по username-кандидатам |
-| 5 | **h8mail** | Breach/утечки | Упоминания в утечках, источники, risk_score |
-| 6 | **EmailRep** | Репутация email | reputation, suspicious, references, risk_score |
-| 7 | **Phone Extractor** | Извлечение телефонов | Парсит публичные URL-ы от других провайдеров |
+| 1 | **Holehe** | Email → сервисы | Зарегистрированные аккаунты, разбивка social/professional |
+| 2 | **Blackbird** | Email + username поиск | Профили на 600+ платформах |
+| 3 | **Maigret** | Username OSINT (досье) | Глубокий поиск профилей по username-кандидатам |
+| 4 | **EmailRep** | Репутация email | reputation, suspicious, references, risk_score |
+| 5 | **Phone Extractor** | Извлечение телефонов | Парсит публичные URL-ы от других провайдеров |
 
 ### Опциональные провайдеры (выключены по умолчанию)
 
 | # | Провайдер | Требует | Что собирает |
 |---|-----------|---------|--------------|
-| 8 | **Sherlock** | ✅ уже установлен | Профили на 400+ сайтах (fallback для Maigret) |
-| 9 | **Mosint** | `mosint` Go-бинарник | social_signal, breach_signal, domain_signal |
-| 10 | **EmailCrawlr** | `EMAILCRAWLR_API_KEY` | Соц. аккаунты, deliverability, domain emails |
+| 6 | **Sherlock** | ✅ уже установлен | Профили на 400+ сайтах (fallback для Maigret) |
+| 7 | **Mosint** | `mosint` Go-бинарник | social_signal, breach_signal, domain_signal |
+| 8 | **EmailCrawlr** | `EMAILCRAWLR_API_KEY` | Соц. аккаунты, deliverability, domain emails |
 
 ### Управление провайдерами
 
@@ -103,13 +92,13 @@ ghunt login
 email-osint-enricher list-providers
 
 # Выбрать конкретные провайдеры
-email-osint-enricher single -e user@gmail.com -p ghunt,holehe,emailrep
+email-osint-enricher single -e user@gmail.com -p holehe,emailrep
 
 # Отключить провайдеры
 email-osint-enricher batch -i list.csv --disable-providers mosint
 
 # Включить Sherlock (по умолчанию выключен)
-email-osint-enricher single -e user@gmail.com -p ghunt,holehe,sherlock
+email-osint-enricher single -e user@gmail.com -p holehe,sherlock
 ```
 
 ---
@@ -123,10 +112,10 @@ email-osint-enricher single -e user@gmail.com -p ghunt,holehe,sherlock
 | `email_footprint_score` | Общий цифровой след |
 | `identity_confidence_score` | Уверенность в идентификации личности |
 | `social_presence_score` | Присутствие в соцсетях и профессиональных платформах |
-| `email_reputation_score` | Репутация email (по EmailRep + breach данным) |
+| `email_reputation_score` | Репутация email (по EmailRep) |
 | `deliverability_score` | Доставляемость (MX, тип домена, EmailRep) |
 | `provider_consensus_score` | Совпадения между провайдерами (cross-validation) |
-| `conflict_risk_score` | Риск конфликта данных (разные имена, слабые профили) |
+| `conflict_risk_score` | Риск конфликта данных (слабые профили) |
 | `final_enrichment_score` | Итоговый взвешенный балл |
 
 ### Формула итогового скора
@@ -182,7 +171,6 @@ email-osint-enricher batch -i emails.csv -o output/  # пакетная обра
 email-osint-enricher batch -i data.xlsx --sheet "Sheet1" --email-column "Email"
 email-osint-enricher batch -i emails.csv --resume    # продолжить после прерывания
 email-osint-enricher batch -i emails.csv --dry-run   # проверка без запуска
-email-osint-enricher single -e user@corp.com --force-ghunt  # GHunt для non-Gmail
 email-osint-enricher batch -i emails.csv --disable-providers mosint
 ```
 
@@ -194,7 +182,7 @@ email-osint-enricher batch -i emails.csv --disable-providers mosint
 
 ```yaml
 providers:
-  ghunt:
+  holehe:
     enabled: true
     timeout_seconds: 120
   emailrep:
@@ -234,7 +222,7 @@ EMAILCRAWLR_API_KEY=your_key   # обязательно для EmailCrawlr
 pytest tests/ -v
 ```
 
-111 тестов: все провайдеры, скоринг, merging, утилиты, graceful failures.
+Все провайдеры, скоринг, merging, утилиты, graceful failures.
 
 ---
 
@@ -248,8 +236,8 @@ email-osint-enricher/
 │   ├── cli.py, pipeline.py, scoring.py, schemas.py
 │   ├── config.py, email_utils.py, username_utils.py
 │   ├── input_loader.py, output_writer.py
-│   └── providers/ (12 провайдеров)
-├── tests/ (111 тестов)
+│   └── providers/ (8 провайдеров)
+├── tests/
 ├── config.yaml.example, .env.example
 └── pyproject.toml
 ```

@@ -87,7 +87,7 @@ def classify_email(email: str) -> EmailType:
 
 
 def is_google_email(email: str, force: bool = False) -> bool:
-    """Check if email should be processed by GHunt."""
+    """Check if email is a Google email (gmail/workspace)."""
     if force:
         return True
     domain = get_domain(email)

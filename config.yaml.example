@@ -3,11 +3,6 @@
 
 providers:
   # ── Core providers (enabled by default) ──────────────────────────────────
-  ghunt:
-    enabled: true
-    timeout_seconds: 120
-    force: false  # Run GHunt even for non-Gmail domains
-
   holehe:
     enabled: true
     timeout_seconds: 120
@@ -24,15 +19,11 @@ providers:
     enabled: false  # Fallback for Maigret — enable if needed
     timeout_seconds: 120
 
-  h8mail:
-    enabled: true
-    timeout_seconds: 120
-
   phone_extractor:
     enabled: true
     timeout_seconds: 30
 
-  # ── Optional providers (v0.2) ────────────────────────────────────────────
+  # ── Optional providers ───────────────────────────────────────────────────
   emailrep:
     enabled: true
     timeout_seconds: 60
@@ -42,8 +33,6 @@ providers:
     enabled: false   # Requires mosint Go binary in PATH
     timeout_seconds: 180
     command: mosint
-
-
 
   emailcrawlr:
     enabled: false   # Requires EMAILCRAWLR_API_KEY

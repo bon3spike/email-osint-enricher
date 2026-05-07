@@ -1,16 +1,14 @@
 """Core enrichment pipeline — orchestrates providers, scoring, and output.
 
-Порядок выполнения провайдеров (12 штук):
-  1. GHunt     — Google OSINT (только gmail/workspace/--force-ghunt)
-  2. Holehe    — email → registered accounts
-  3. Blackbird — email + username → profiles (600+ платформ)
-  4. Maigret   — deep username OSINT (dossier)
-  5. Sherlock  — fast username fallback (400+ платформ)
-  6. h8mail    — breach/risk signal
-  7. EmailRep  — email reputation/risk (API)
-  8. Mosint    — email OSINT (Go subprocess)
-  9. EmailCrawlr — email intelligence (API)
-  10. phone_extractor — публичные телефоны из найденных профилей (always last)
+Порядок выполнения провайдеров (8 штук):
+  1. Holehe    — email → registered accounts
+  2. Blackbird — email + username → profiles (600+ платформ)
+  3. Maigret   — deep username OSINT (dossier)
+  4. Sherlock  — fast username fallback (400+ платформ)
+  5. EmailRep  — email reputation/risk (API)
+  6. Mosint    — email OSINT (Go subprocess)
+  7. EmailCrawlr — email intelligence (API)
+  8. phone_extractor — публичные телефоны из найденных профилей (always last)
 """
 
 from __future__ import annotations
@@ -38,12 +36,10 @@ from email_osint_enricher.email_utils import (
 from email_osint_enricher.output_writer import write_results
 from email_osint_enricher.providers import PROVIDER_REGISTRY
 from email_osint_enricher.providers.base import ProviderContext
-from email_osint_enricher.providers.ghunt_provider import GHuntProvider
 from email_osint_enricher.providers.holehe_provider import HoleheProvider
 from email_osint_enricher.providers.blackbird_provider import BlackbirdProvider
 from email_osint_enricher.providers.maigret_provider import MaigretProvider
 from email_osint_enricher.providers.sherlock_provider import SherlockProvider
-from email_osint_enricher.providers.h8mail_provider import H8mailProvider
 from email_osint_enricher.providers.phone_extractor import PhoneExtractorProvider
 from email_osint_enricher.providers.emailrep_provider import EmailRepProvider
 from email_osint_enricher.providers.mosint_provider import MosintProvider
@@ -52,12 +48,10 @@ from email_osint_enricher.schemas import (
     AppConfig,
     EmailType,
     EnrichmentResult,
-    GHuntResult,
     HoleheResult,
     BlackbirdResult,
     MaigretResult,
     SherlockResult,
-    H8mailResult,
     PhoneExtractorResult,
     EmailRepResult,
     MosintResult,
@@ -81,7 +75,6 @@ class EnrichmentPipeline:
         output_dir: str = "output",
         providers_filter: Optional[list[str]] = None,
         disabled_providers: Optional[list[str]] = None,
-        force_ghunt: bool = False,
         dry_run: bool = False,
         resume: bool = False,
         proxy: Optional[str] = None,
@@ -89,7 +82,6 @@ class EnrichmentPipeline:
         self.config = config or load_config()
         self.output_dir = Path(output_dir)
         self.dry_run = dry_run
-        self.force_ghunt = force_ghunt
         self.resume = resume
         self.proxy = proxy
 
@@ -110,11 +102,6 @@ class EnrichmentPipeline:
                 cfg = self.config.providers.get(name)
                 if cfg and cfg.enabled:
                     self.active_providers.add(name)
-
-        # Force ghunt from config
-        ghunt_cfg = self.config.providers.get("ghunt")
-        if ghunt_cfg and ghunt_cfg.force:
-            self.force_ghunt = True
 
         # Init providers
         self._providers = self._init_providers()
@@ -138,9 +125,7 @@ class EnrichmentPipeline:
             timeout = cfg.timeout_seconds if cfg else 120
             raw_dir = self.output_dir / "raw" / name if self.config.output.save_raw_json else None
 
-            if name == "ghunt":
-                providers[name] = GHuntProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "holehe":
+            if name == "holehe":
                 providers[name] = HoleheProvider(timeout=timeout, raw_output_dir=raw_dir, proxy=self.proxy)
             elif name == "blackbird":
                 providers[name] = BlackbirdProvider(timeout=timeout, raw_output_dir=raw_dir)
@@ -148,8 +133,6 @@ class EnrichmentPipeline:
                 providers[name] = MaigretProvider(timeout=timeout, raw_output_dir=raw_dir)
             elif name == "sherlock":
                 providers[name] = SherlockProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "h8mail":
-                providers[name] = H8mailProvider(timeout=timeout, raw_output_dir=raw_dir)
             elif name == "phone_extractor":
                 providers[name] = PhoneExtractorProvider(
                     timeout=timeout, raw_output_dir=raw_dir, proxy=self.proxy,
@@ -218,12 +201,10 @@ class EnrichmentPipeline:
         )
 
         # Empty results for scoring
-        ghunt_res = GHuntResult()
         holehe_res = HoleheResult()
         blackbird_res = BlackbirdResult()
         maigret_res = MaigretResult()
         sherlock_res = SherlockResult()
-        h8mail_res = H8mailResult()
         phone_res = PhoneExtractorResult()
         emailrep_res = EmailRepResult()
         mosint_res = MosintResult()
@@ -234,7 +215,7 @@ class EnrichmentPipeline:
             result.status = ProcessingStatus.skipped.value
             result.error_message = "already processed (resume mode)"
             logger.debug(f"Skipping already-processed: {email_display}")
-            result = score_result(result, ghunt_res, holehe_res, row)
+            result = score_result(result, holehe_res, row)
             return result
 
         # ── MX check ────────────────────────────────────────────────────
@@ -242,14 +223,14 @@ class EnrichmentPipeline:
             result.status = ProcessingStatus.skipped.value
             result.error_message = f"Domain {domain} has no MX records"
             logger.info(f"Skipping {email_display}: no MX records for {domain}")
-            result = score_result(result, ghunt_res, holehe_res, row)
+            result = score_result(result, holehe_res, row)
             return result
 
         # ── Dry-run ─────────────────────────────────────────────────────
         if self.dry_run:
             result.status = ProcessingStatus.skipped.value
             result.error_message = "dry-run mode"
-            result = score_result(result, ghunt_res, holehe_res, row)
+            result = score_result(result, holehe_res, row)
             return result
 
         # ── Generate username candidates ─────────────────────────────────
@@ -266,89 +247,107 @@ class EnrichmentPipeline:
             applicant_country=row.applicantCountry,
             applicant_id=row.applicantId,
             username_candidates=usernames,
-            force_ghunt=self.force_ghunt,
             is_google_email=is_google_email(email, force=False),
             is_google_workspace=is_gws,
             corporate_domain=domain if email_type == EmailType.corporate else None,
             proxy=self.proxy,
         )
 
-        # ── Run providers in order ───────────────────────────────────────
+        # ── Run providers in parallel ────────────────────────────────────
+        # All main providers run concurrently; phone_extractor runs last
+        # (it needs profiles_found from other providers).
 
-        # 1. GHunt
-        if "ghunt" in self._providers:
-            prov = self._providers["ghunt"]
-            if await prov.should_run(context):
-                logger.info(f"Running GHunt for {email_display}")
-                ghunt_res = await self._run_with_retry(prov.run, context, "ghunt")
-
-        # 2. Holehe
-        if "holehe" in self._providers:
+        async def _run_holehe():
+            nonlocal holehe_res
+            if "holehe" not in self._providers:
+                return
             prov = self._providers["holehe"]
-            if await prov.should_run(context):
-                logger.info(f"Running Holehe for {email_display}")
-                holehe_res = await self._run_with_retry(prov.run, context, "holehe")
-                if holehe_res.success and holehe_res.registered_services_list:
-                    social, prof = classify_holehe_services(holehe_res.registered_services_list)
-                    holehe_res.social_services_count = social
-                    holehe_res.professional_services_count = prof
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running Holehe for {email_display}")
+            holehe_res = await self._run_with_retry(prov.run, context, "holehe")
+            if holehe_res.success and holehe_res.registered_services_list:
+                social, prof = classify_holehe_services(holehe_res.registered_services_list)
+                holehe_res.social_services_count = social
+                holehe_res.professional_services_count = prof
 
-        # 3. Blackbird
-        if "blackbird" in self._providers:
+        async def _run_blackbird():
+            nonlocal blackbird_res
+            if "blackbird" not in self._providers:
+                return
             prov = self._providers["blackbird"]
-            if await prov.should_run(context):
-                logger.info(f"Running Blackbird for {email_display}")
-                blackbird_res = await self._run_with_retry(prov.run, context, "blackbird")
-                if blackbird_res.profiles_list:
-                    context.profiles_found.extend(blackbird_res.profiles_list)
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running Blackbird for {email_display}")
+            blackbird_res = await self._run_with_retry(prov.run, context, "blackbird")
 
-        # 4. Maigret
-        if "maigret" in self._providers:
+        async def _run_maigret():
+            nonlocal maigret_res
+            if "maigret" not in self._providers:
+                return
             prov = self._providers["maigret"]
-            if await prov.should_run(context):
-                logger.info(f"Running Maigret for {email_display}")
-                maigret_res = await self._run_with_retry(prov.run, context, "maigret")
-                if maigret_res.profiles_list:
-                    context.profiles_found.extend(maigret_res.profiles_list)
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running Maigret for {email_display}")
+            maigret_res = await self._run_with_retry(prov.run, context, "maigret")
 
-        # 5. Sherlock
-        if "sherlock" in self._providers:
+        async def _run_sherlock():
+            nonlocal sherlock_res
+            if "sherlock" not in self._providers:
+                return
             prov = self._providers["sherlock"]
-            if await prov.should_run(context):
-                logger.info(f"Running Sherlock for {email_display}")
-                sherlock_res = await self._run_with_retry(prov.run, context, "sherlock")
-                if sherlock_res.profiles_list:
-                    context.profiles_found.extend(sherlock_res.profiles_list)
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running Sherlock for {email_display}")
+            sherlock_res = await self._run_with_retry(prov.run, context, "sherlock")
 
-        # 6. h8mail
-        if "h8mail" in self._providers:
-            prov = self._providers["h8mail"]
-            if await prov.should_run(context):
-                logger.info(f"Running h8mail for {email_display}")
-                h8mail_res = await self._run_with_retry(prov.run, context, "h8mail")
-
-        # 7. EmailRep
-        if "emailrep" in self._providers:
+        async def _run_emailrep():
+            nonlocal emailrep_res
+            if "emailrep" not in self._providers:
+                return
             prov = self._providers["emailrep"]
-            if await prov.should_run(context):
-                logger.info(f"Running EmailRep for {email_display}")
-                emailrep_res = await self._run_with_retry(prov.run, context, "emailrep")
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running EmailRep for {email_display}")
+            emailrep_res = await self._run_with_retry(prov.run, context, "emailrep")
 
-        # 8. Mosint
-        if "mosint" in self._providers:
+        async def _run_mosint():
+            nonlocal mosint_res
+            if "mosint" not in self._providers:
+                return
             prov = self._providers["mosint"]
-            if await prov.should_run(context):
-                logger.info(f"Running Mosint for {email_display}")
-                mosint_res = await self._run_with_retry(prov.run, context, "mosint")
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running Mosint for {email_display}")
+            mosint_res = await self._run_with_retry(prov.run, context, "mosint")
 
-        # 9. EmailCrawlr
-        if "emailcrawlr" in self._providers:
+        async def _run_emailcrawlr():
+            nonlocal emailcrawlr_res
+            if "emailcrawlr" not in self._providers:
+                return
             prov = self._providers["emailcrawlr"]
-            if await prov.should_run(context):
-                logger.info(f"Running EmailCrawlr for {email_display}")
-                emailcrawlr_res = await self._run_with_retry(prov.run, context, "emailcrawlr")
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running EmailCrawlr for {email_display}")
+            emailcrawlr_res = await self._run_with_retry(prov.run, context, "emailcrawlr")
 
-        # 12. Phone extractor (always last — uses profiles_found from all)
+        # Run all main providers in parallel
+        await asyncio.gather(
+            _run_holehe(),
+            _run_blackbird(),
+            _run_maigret(),
+            _run_sherlock(),
+            _run_emailrep(),
+            _run_mosint(),
+            _run_emailcrawlr(),
+        )
+
+        # Collect profiles from completed providers for phone extractor
+        for res in [blackbird_res, maigret_res, sherlock_res]:
+            if res.profiles_list:
+                context.profiles_found.extend(res.profiles_list)
+
+        # Phone extractor runs last — needs profiles_found from all others
         if "phone_extractor" in self._providers:
             prov = self._providers["phone_extractor"]
             if await prov.should_run(context):
@@ -356,22 +355,6 @@ class EnrichmentPipeline:
                 phone_res = await self._run_with_retry(prov.run, context, "phone_extractor")
 
         # ── Map provider results to EnrichmentResult ─────────────────────
-
-        # GHunt
-        result.ghunt_checked = ghunt_res.checked
-        result.ghunt_success = ghunt_res.success
-        result.ghunt_display_name = ghunt_res.display_name
-        result.ghunt_gaia_id = ghunt_res.gaia_id
-        result.ghunt_google_account_found = ghunt_res.google_account_found
-        result.ghunt_profile_photo_found = ghunt_res.profile_photo_found
-        result.ghunt_profile_photo_url = ghunt_res.profile_photo_url
-        result.ghunt_google_maps_reviews_found = ghunt_res.google_maps_reviews_found
-        result.ghunt_youtube_found = ghunt_res.youtube_found
-        result.ghunt_calendar_public_found = ghunt_res.calendar_public_found
-        result.ghunt_drive_public_found = ghunt_res.drive_public_found
-        result.ghunt_raw_json_path = ghunt_res.raw_json_path
-        result.ghunt_confidence_score = ghunt_res.confidence_score
-        result.ghunt_error = ghunt_res.error
 
         # Holehe
         result.holehe_checked = holehe_res.checked
@@ -419,16 +402,6 @@ class EnrichmentPipeline:
         result.sherlock_raw_json_path = sherlock_res.raw_json_path
         result.sherlock_confidence_score = sherlock_res.confidence_score
         result.sherlock_error = sherlock_res.error
-
-        # h8mail
-        result.h8mail_checked = h8mail_res.checked
-        result.h8mail_success = h8mail_res.success
-        result.h8mail_breach_mentions_count = h8mail_res.breach_mentions_count
-        result.h8mail_sources_count = h8mail_res.sources_count
-        result.h8mail_sources_list = ", ".join(h8mail_res.sources_list)
-        result.h8mail_risk_score = h8mail_res.risk_score
-        result.h8mail_raw_json_path = h8mail_res.raw_json_path
-        result.h8mail_error = h8mail_res.error
 
         # EmailRep
         result.emailrep_checked = emailrep_res.checked
@@ -480,8 +453,8 @@ class EnrichmentPipeline:
 
         # ── Determine status ─────────────────────────────────────────────
         all_results = [
-            ghunt_res, holehe_res, blackbird_res, maigret_res,
-            sherlock_res, h8mail_res, phone_res,
+            holehe_res, blackbird_res, maigret_res,
+            sherlock_res, phone_res,
             emailrep_res, mosint_res,
             emailcrawlr_res,
         ]
@@ -499,11 +472,10 @@ class EnrichmentPipeline:
 
         # ── Score ────────────────────────────────────────────────────────
         result = score_result(
-            result, ghunt_res, holehe_res, row,
+            result, holehe_res, row,
             blackbird=blackbird_res if blackbird_res.checked else None,
             maigret=maigret_res if maigret_res.checked else None,
             sherlock=sherlock_res if sherlock_res.checked else None,
-            h8mail=h8mail_res if h8mail_res.checked else None,
             phone=phone_res if phone_res.checked else None,
             emailrep=emailrep_res if emailrep_res.checked else None,
             mosint=mosint_res if mosint_res.checked else None,
@@ -540,18 +512,16 @@ class EnrichmentPipeline:
         except Exception as e:
             logger.error(f"{provider} all retries exhausted: {e}")
             empty_results = {
-                "ghunt": GHuntResult(checked=True, success=False, error=str(e)),
                 "holehe": HoleheResult(checked=True, success=False, error=str(e)),
                 "blackbird": BlackbirdResult(checked=True, success=False, error=str(e)),
                 "maigret": MaigretResult(checked=True, success=False, error=str(e)),
                 "sherlock": SherlockResult(checked=True, success=False, error=str(e)),
-                "h8mail": H8mailResult(checked=True, success=False, error=str(e)),
                 "phone_extractor": PhoneExtractorResult(checked=True, success=False, phone_extraction_error=str(e)),
                 "emailrep": EmailRepResult(checked=True, success=False, error=str(e)),
                 "mosint": MosintResult(checked=True, success=False, error=str(e)),
                 "emailcrawlr": EmailCrawlrResult(checked=True, success=False, error=str(e)),
             }
-            return empty_results.get(provider, GHuntResult(checked=True, success=False))
+            return empty_results.get(provider, HoleheResult(checked=True, success=False))
 
     async def process_batch(self, rows: list[InputRow]) -> tuple[list[EnrichmentResult], RunSummary]:
         """Process a batch of emails with progress bar and rate limiting."""
@@ -619,8 +589,12 @@ class EnrichmentPipeline:
             jsonl_path = self.output_dir / "enriched_results_partial.jsonl"
             self.output_dir.mkdir(parents=True, exist_ok=True)
 
-            with open(jsonl_path, "a", encoding="utf-8") as jsonl_f:
-                for row in unique_rows:
+            # Use semaphore for concurrent email processing
+            email_semaphore = asyncio.Semaphore(self.config.batch.concurrency)
+            results_lock = asyncio.Lock()
+
+            async def _process_one(row: InputRow):
+                async with email_semaphore:
                     try:
                         result = await self.process_single(row)
                     except Exception as e:
@@ -635,18 +609,21 @@ class EnrichmentPipeline:
                             error_message=str(e),
                         )
 
-                    results.append(result)
-
-                    try:
-                        jsonl_f.write(result.model_dump_json() + "\n")
-                        jsonl_f.flush()
-                    except Exception:
-                        pass
-
-                    progress.update(task, advance=1)
+                    async with results_lock:
+                        results.append(result)
+                        try:
+                            jsonl_f.write(result.model_dump_json() + "\n")
+                            jsonl_f.flush()
+                        except Exception:
+                            pass
+                        progress.update(task, advance=1)
 
                     if self.delay > 0 and not self.dry_run:
                         await asyncio.sleep(self.delay)
+
+            with open(jsonl_path, "a", encoding="utf-8") as jsonl_f:
+                # Process all emails concurrently (limited by semaphore)
+                await asyncio.gather(*[_process_one(row) for row in unique_rows])
 
         finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
         summary = self._build_summary(results, started_at, finished_at)
@@ -684,10 +661,6 @@ class EnrichmentPipeline:
                 summary.skipped += 1
 
             # Per-provider stats
-            if r.ghunt_checked:
-                summary.ghunt_calls += 1
-            if r.ghunt_success:
-                summary.ghunt_successes += 1
             if r.holehe_checked:
                 summary.holehe_calls += 1
             if r.holehe_success:
@@ -704,10 +677,6 @@ class EnrichmentPipeline:
                 summary.sherlock_calls += 1
             if r.sherlock_success:
                 summary.sherlock_successes += 1
-            if r.h8mail_checked:
-                summary.h8mail_calls += 1
-            if r.h8mail_success:
-                summary.h8mail_successes += 1
             if r.phone_extractor_checked:
                 summary.phone_extractor_calls += 1
             if r.phone_candidates_found:

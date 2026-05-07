@@ -61,14 +61,11 @@ class LoggingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=lambda: {
-        "ghunt": ProviderConfig(),
         "holehe": ProviderConfig(),
         "blackbird": ProviderConfig(enabled=True),
         "maigret": ProviderConfig(enabled=True),
         "sherlock": ProviderConfig(enabled=False),
-        "h8mail": ProviderConfig(enabled=True),
         "phone_extractor": ProviderConfig(enabled=True),
-        # New providers
         "emailrep": ProviderConfig(enabled=True, timeout_seconds=60),
         "mosint": ProviderConfig(enabled=False, timeout_seconds=180),
         "emailcrawlr": ProviderConfig(enabled=False, timeout_seconds=60),
@@ -96,24 +93,6 @@ class InputRow(BaseModel):
 
 
 # ── Provider results ─────────────────────────────────────────────────────────
-
-class GHuntResult(BaseModel):
-    checked: bool = False
-    success: bool = False
-    display_name: Optional[str] = None
-    gaia_id: Optional[str] = None
-    google_account_found: bool = False
-    profile_photo_found: bool = False
-    profile_photo_url: Optional[str] = None
-    google_maps_reviews_found: bool = False
-    youtube_found: bool = False
-    calendar_public_found: bool = False
-    drive_public_found: bool = False
-    raw_json_path: Optional[str] = None
-    confidence_score: float = 0.0
-    error: Optional[str] = None
-    raw: dict[str, Any] = Field(default_factory=dict)
-
 
 class HoleheResult(BaseModel):
     checked: bool = False
@@ -163,18 +142,6 @@ class SherlockResult(BaseModel):
     profiles_list: list[str] = Field(default_factory=list)
     raw_json_path: Optional[str] = None
     confidence_score: float = 0.0
-    error: Optional[str] = None
-    raw: dict[str, Any] = Field(default_factory=dict)
-
-
-class H8mailResult(BaseModel):
-    checked: bool = False
-    success: bool = False
-    breach_mentions_count: int = 0
-    sources_count: int = 0
-    sources_list: list[str] = Field(default_factory=list)
-    risk_score: float = 0.0
-    raw_json_path: Optional[str] = None
     error: Optional[str] = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
@@ -287,22 +254,6 @@ class EnrichmentResult(BaseModel):
     # Username candidates
     username_candidates: str = ""
 
-    # ── GHunt ────────────────────────────────────────────────────────────
-    ghunt_checked: bool = False
-    ghunt_success: bool = False
-    ghunt_display_name: Optional[str] = None
-    ghunt_gaia_id: Optional[str] = None
-    ghunt_google_account_found: bool = False
-    ghunt_profile_photo_found: bool = False
-    ghunt_profile_photo_url: Optional[str] = None
-    ghunt_google_maps_reviews_found: bool = False
-    ghunt_youtube_found: bool = False
-    ghunt_calendar_public_found: bool = False
-    ghunt_drive_public_found: bool = False
-    ghunt_raw_json_path: Optional[str] = None
-    ghunt_confidence_score: float = 0.0
-    ghunt_error: Optional[str] = None
-
     # ── Holehe ───────────────────────────────────────────────────────────
     holehe_checked: bool = False
     holehe_success: bool = False
@@ -345,16 +296,6 @@ class EnrichmentResult(BaseModel):
     sherlock_raw_json_path: Optional[str] = None
     sherlock_confidence_score: float = 0.0
     sherlock_error: Optional[str] = None
-
-    # ── h8mail ───────────────────────────────────────────────────────────
-    h8mail_checked: bool = False
-    h8mail_success: bool = False
-    h8mail_breach_mentions_count: int = 0
-    h8mail_sources_count: int = 0
-    h8mail_sources_list: str = ""
-    h8mail_risk_score: float = 0.0
-    h8mail_raw_json_path: Optional[str] = None
-    h8mail_error: Optional[str] = None
 
     # ── Phone Extractor ──────────────────────────────────────────────────
     phone_extractor_checked: bool = False
@@ -434,8 +375,6 @@ class RunSummary(BaseModel):
     failed: int = 0
     skipped: int = 0
     # Per-provider stats
-    ghunt_calls: int = 0
-    ghunt_successes: int = 0
     holehe_calls: int = 0
     holehe_successes: int = 0
     blackbird_calls: int = 0
@@ -444,8 +383,6 @@ class RunSummary(BaseModel):
     maigret_successes: int = 0
     sherlock_calls: int = 0
     sherlock_successes: int = 0
-    h8mail_calls: int = 0
-    h8mail_successes: int = 0
     phone_extractor_calls: int = 0
     phone_extractor_successes: int = 0
     emailrep_calls: int = 0

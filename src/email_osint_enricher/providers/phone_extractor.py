@@ -1,7 +1,7 @@
 """Public Profile Phone Extractor — извлечение телефонов из публичных страниц.
 
 Извлекает телефонные кандидаты из публично доступных URL/профилей,
-найденных другими провайдерами (GHunt, Holehe, Blackbird, Maigret, Sherlock).
+найденных другими провайдерами (Holehe, Blackbird, Maigret, Sherlock).
 
 Правила:
 - Не обходить login walls
