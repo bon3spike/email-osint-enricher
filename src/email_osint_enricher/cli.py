@@ -33,7 +33,7 @@ ALL_PROVIDERS = ",".join(PROVIDER_REGISTRY.keys())
 
 app = typer.Typer(
     name="email-osint-enricher",
-    help="Email OSINT enrichment tool — 8 providers, scored output.",
+    help="Email OSINT enrichment tool — 11 providers, scored output.",
     add_completion=False,
 )
 console = Console()

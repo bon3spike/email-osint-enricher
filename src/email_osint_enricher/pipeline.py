@@ -1,14 +1,17 @@
 """Core enrichment pipeline — orchestrates providers, scoring, and output.
 
-Порядок выполнения провайдеров (8 штук):
-  1. Holehe    — email → registered accounts
-  2. Blackbird — email + username → profiles (600+ платформ)
-  3. Maigret   — deep username OSINT (dossier)
-  4. Sherlock  — fast username fallback (400+ платформ)
-  5. EmailRep  — email reputation/risk (API)
-  6. Mosint    — email OSINT (Go subprocess)
+Порядок выполнения провайдеров (11 штук, все параллельно кроме phone_extractor):
+  1. Holehe      — email → registered accounts
+  2. Blackbird   — email + username → profiles (600+ платформ)
+  3. Maigret     — deep username OSINT (dossier)
+  4. Sherlock    — fast username fallback (400+ платформ)
+  5. EmailRep    — email reputation/risk (API)
+  6. Mosint      — email OSINT (Go subprocess)
   7. EmailCrawlr — email intelligence (API)
-  8. phone_extractor — публичные телефоны из найденных профилей (always last)
+  8. HudsonRock  — cybercrime intelligence (infostealers)
+  9. Gravatar    — profile/avatar lookup (MD5 hash)
+  10. Socialscan  — accurate platform registration check
+  11. phone_extractor — публичные телефоны из найденных профилей (always last)
 """
 
 from __future__ import annotations
@@ -44,6 +47,9 @@ from email_osint_enricher.providers.phone_extractor import PhoneExtractorProvide
 from email_osint_enricher.providers.emailrep_provider import EmailRepProvider
 from email_osint_enricher.providers.mosint_provider import MosintProvider
 from email_osint_enricher.providers.emailcrawlr_provider import EmailCrawlrProvider
+from email_osint_enricher.providers.hudsonrock_provider import HudsonRockProvider
+from email_osint_enricher.providers.gravatar_provider import GravatarProvider
+from email_osint_enricher.providers.socialscan_provider import SocialscanProvider
 from email_osint_enricher.schemas import (
     AppConfig,
     EmailType,
@@ -56,6 +62,9 @@ from email_osint_enricher.schemas import (
     EmailRepResult,
     MosintResult,
     EmailCrawlrResult,
+    HudsonRockResult,
+    GravatarResult,
+    SocialscanResult,
     InputRow,
     ProcessingStatus,
     RunSummary,
@@ -145,6 +154,15 @@ class EnrichmentPipeline:
             elif name == "emailcrawlr":
                 providers[name] = EmailCrawlrProvider(timeout=timeout, raw_output_dir=raw_dir)
 
+            elif name == "hudsonrock":
+                providers[name] = HudsonRockProvider(timeout=timeout, raw_output_dir=raw_dir)
+
+            elif name == "gravatar":
+                providers[name] = GravatarProvider(timeout=timeout, raw_output_dir=raw_dir)
+
+            elif name == "socialscan":
+                providers[name] = SocialscanProvider(timeout=timeout, raw_output_dir=raw_dir)
+
         return providers
 
     def _load_resume_state(self):
@@ -209,6 +227,9 @@ class EnrichmentPipeline:
         emailrep_res = EmailRepResult()
         mosint_res = MosintResult()
         emailcrawlr_res = EmailCrawlrResult()
+        hudsonrock_res = HudsonRockResult()
+        gravatar_res = GravatarResult()
+        socialscan_res = SocialscanResult()
 
         # ── Resume check ────────────────────────────────────────────────
         if self.resume and normalized in self._completed_emails:
@@ -331,6 +352,36 @@ class EnrichmentPipeline:
             logger.info(f"Running EmailCrawlr for {email_display}")
             emailcrawlr_res = await self._run_with_retry(prov.run, context, "emailcrawlr")
 
+        async def _run_hudsonrock():
+            nonlocal hudsonrock_res
+            if "hudsonrock" not in self._providers:
+                return
+            prov = self._providers["hudsonrock"]
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running HudsonRock for {email_display}")
+            hudsonrock_res = await self._run_with_retry(prov.run, context, "hudsonrock")
+
+        async def _run_gravatar():
+            nonlocal gravatar_res
+            if "gravatar" not in self._providers:
+                return
+            prov = self._providers["gravatar"]
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running Gravatar for {email_display}")
+            gravatar_res = await self._run_with_retry(prov.run, context, "gravatar")
+
+        async def _run_socialscan():
+            nonlocal socialscan_res
+            if "socialscan" not in self._providers:
+                return
+            prov = self._providers["socialscan"]
+            if not await prov.should_run(context):
+                return
+            logger.info(f"Running Socialscan for {email_display}")
+            socialscan_res = await self._run_with_retry(prov.run, context, "socialscan")
+
         # Run all main providers in parallel
         await asyncio.gather(
             _run_holehe(),
@@ -340,6 +391,9 @@ class EnrichmentPipeline:
             _run_emailrep(),
             _run_mosint(),
             _run_emailcrawlr(),
+            _run_hudsonrock(),
+            _run_gravatar(),
+            _run_socialscan(),
         )
 
         # Collect profiles from completed providers for phone extractor
@@ -451,12 +505,53 @@ class EnrichmentPipeline:
         result.phone_candidate_confidence_score = phone_res.phone_candidate_confidence_score
         result.phone_extraction_error = phone_res.phone_extraction_error
 
+        # HudsonRock
+        result.hudsonrock_checked = hudsonrock_res.checked
+        result.hudsonrock_success = hudsonrock_res.success
+        result.hudsonrock_is_compromised = hudsonrock_res.is_compromised
+        result.hudsonrock_stealers_count = hudsonrock_res.stealers_count
+        result.hudsonrock_total_corporate_services = hudsonrock_res.total_corporate_services
+        result.hudsonrock_total_user_services = hudsonrock_res.total_user_services
+        result.hudsonrock_latest_compromise_date = hudsonrock_res.latest_compromise_date
+        result.hudsonrock_compromised_dates = hudsonrock_res.compromised_dates
+        result.hudsonrock_operating_systems = hudsonrock_res.operating_systems
+        result.hudsonrock_confidence_score = hudsonrock_res.confidence_score
+        result.hudsonrock_raw_json_path = hudsonrock_res.raw_json_path
+        result.hudsonrock_error = hudsonrock_res.error
+
+        # Gravatar
+        result.gravatar_checked = gravatar_res.checked
+        result.gravatar_success = gravatar_res.success
+        result.gravatar_has_profile = gravatar_res.has_profile
+        result.gravatar_display_name = gravatar_res.display_name
+        result.gravatar_full_name = gravatar_res.full_name
+        result.gravatar_avatar_url = gravatar_res.avatar_url
+        result.gravatar_profile_url = gravatar_res.profile_url
+        result.gravatar_about_me = gravatar_res.about_me
+        result.gravatar_location = gravatar_res.location
+        result.gravatar_linked_accounts_count = gravatar_res.linked_accounts_count
+        result.gravatar_linked_accounts = ", ".join(gravatar_res.linked_accounts)
+        result.gravatar_confidence_score = gravatar_res.confidence_score
+        result.gravatar_raw_json_path = gravatar_res.raw_json_path
+        result.gravatar_error = gravatar_res.error
+
+        # Socialscan
+        result.socialscan_checked = socialscan_res.checked
+        result.socialscan_success = socialscan_res.success
+        result.socialscan_registered_count = socialscan_res.registered_count
+        result.socialscan_registered_platforms = ", ".join(socialscan_res.registered_platforms)
+        result.socialscan_not_registered_count = socialscan_res.not_registered_count
+        result.socialscan_confidence_score = socialscan_res.confidence_score
+        result.socialscan_raw_json_path = socialscan_res.raw_json_path
+        result.socialscan_error = socialscan_res.error
+
         # ── Determine status ─────────────────────────────────────────────
         all_results = [
             holehe_res, blackbird_res, maigret_res,
             sherlock_res, phone_res,
             emailrep_res, mosint_res,
             emailcrawlr_res,
+            hudsonrock_res, gravatar_res, socialscan_res,
         ]
         checked = [r for r in all_results if r.checked]
         successes = [r for r in checked if r.success]
@@ -480,6 +575,9 @@ class EnrichmentPipeline:
             emailrep=emailrep_res if emailrep_res.checked else None,
             mosint=mosint_res if mosint_res.checked else None,
             emailcrawlr=emailcrawlr_res if emailcrawlr_res.checked else None,
+            hudsonrock=hudsonrock_res if hudsonrock_res.checked else None,
+            gravatar=gravatar_res if gravatar_res.checked else None,
+            socialscan=socialscan_res if socialscan_res.checked else None,
         )
 
         return result
@@ -488,7 +586,8 @@ class EnrichmentPipeline:
         """Run a provider coroutine with retries and exponential backoff."""
         from email_osint_enricher.schemas import (
             EmailRepResult, MosintResult,
-            EmailCrawlrResult,
+            EmailCrawlrResult, HudsonRockResult,
+            GravatarResult, SocialscanResult,
         )
 
         last_exc = None
@@ -520,6 +619,9 @@ class EnrichmentPipeline:
                 "emailrep": EmailRepResult(checked=True, success=False, error=str(e)),
                 "mosint": MosintResult(checked=True, success=False, error=str(e)),
                 "emailcrawlr": EmailCrawlrResult(checked=True, success=False, error=str(e)),
+                "hudsonrock": HudsonRockResult(checked=True, success=False, error=str(e)),
+                "gravatar": GravatarResult(checked=True, success=False, error=str(e)),
+                "socialscan": SocialscanResult(checked=True, success=False, error=str(e)),
             }
             return empty_results.get(provider, HoleheResult(checked=True, success=False))
 
@@ -693,6 +795,18 @@ class EnrichmentPipeline:
                 summary.emailcrawlr_calls += 1
             if r.emailcrawlr_success:
                 summary.emailcrawlr_successes += 1
+            if r.hudsonrock_checked:
+                summary.hudsonrock_calls += 1
+            if r.hudsonrock_success:
+                summary.hudsonrock_successes += 1
+            if r.gravatar_checked:
+                summary.gravatar_calls += 1
+            if r.gravatar_success:
+                summary.gravatar_successes += 1
+            if r.socialscan_checked:
+                summary.socialscan_calls += 1
+            if r.socialscan_success:
+                summary.socialscan_successes += 1
 
             summary.total_profiles_discovered += r.total_profiles_found
             summary.total_phone_candidates += r.phone_candidates_count

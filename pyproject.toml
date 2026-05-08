@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "email-osint-enricher"
-version = "0.3.0"
-description = "Local OSINT email enrichment tool — 12 providers, advanced scoring, all-in-one repo"
+version = "0.4.0"
+description = "Local OSINT email enrichment tool — 11 providers, advanced scoring, all-in-one repo"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -33,6 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+socialscan = ["socialscan>=2.0"]
 dev = ["pytest>=7.4", "pytest-asyncio>=0.23"]
 
 [project.scripts]

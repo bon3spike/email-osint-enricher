@@ -39,6 +39,19 @@ providers:
     timeout_seconds: 60
     api_key_env: EMAILCRAWLR_API_KEY
 
+  # ── v0.4.0: New providers ────────────────────────────────────────────────
+  hudsonrock:
+    enabled: true    # Free — no API key needed. Cybercrime intelligence (infostealers).
+    timeout_seconds: 30
+
+  gravatar:
+    enabled: true    # Free — no API key needed. Profile/avatar lookup by email hash.
+    timeout_seconds: 15
+
+  socialscan:
+    enabled: false   # Requires: pip install socialscan. Accurate platform registration check.
+    timeout_seconds: 60
+
 batch:
   concurrency: 3        # Parallel provider calls
   delay_seconds: 1.5    # Delay between emails

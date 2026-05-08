@@ -3,7 +3,7 @@
 Локальный CLI-инструмент для массового OSINT-обогащения email-списков.
 На вход — CSV/XLSX с email-ами, на выход — таблица со всеми найденными данными и скорингом.
 
-**8 OSINT-провайдеров** • **8 метрик скоринга** • **CSV + XLSX + JSONL выход** • **Batch + Resume** • **Всё в одной репе**
+**11 OSINT-провайдеров** • **8 метрик скоринга** • **CSV + XLSX + JSONL выход** • **Batch + Resume** • **Параллельный запуск** • **Всё в одной репе**
 
 ---
 
@@ -75,15 +75,18 @@ pytest tests/ -v
 | 2 | **Blackbird** | Email + username поиск | Профили на 600+ платформах |
 | 3 | **Maigret** | Username OSINT (досье) | Глубокий поиск профилей по username-кандидатам |
 | 4 | **EmailRep** | Репутация email | reputation, suspicious, references, risk_score |
-| 5 | **Phone Extractor** | Извлечение телефонов | Парсит публичные URL-ы от других провайдеров |
+| 5 | **HudsonRock** 🆕 | Cybercrime Intelligence | Инфостилеры, утечки, скомпрометированные данные (бесплатно) |
+| 6 | **Gravatar** 🆕 | Профиль по email хешу | Имя, аватар, био, локация, привязанные аккаунты (бесплатно) |
+| 7 | **Phone Extractor** | Извлечение телефонов | Парсит публичные URL-ы от других провайдеров |
 
 ### Опциональные провайдеры (выключены по умолчанию)
 
 | # | Провайдер | Требует | Что собирает |
 |---|-----------|---------|--------------|
-| 6 | **Sherlock** | ✅ уже установлен | Профили на 400+ сайтах (fallback для Maigret) |
-| 7 | **Mosint** | `mosint` Go-бинарник | social_signal, breach_signal, domain_signal |
-| 8 | **EmailCrawlr** | `EMAILCRAWLR_API_KEY` | Соц. аккаунты, deliverability, domain emails |
+| 8 | **Sherlock** | ✅ уже установлен | Профили на 400+ сайтах (fallback для Maigret) |
+| 9 | **Mosint** | `mosint` Go-бинарник | social_signal, breach_signal, domain_signal |
+| 10 | **EmailCrawlr** | `EMAILCRAWLR_API_KEY` | Соц. аккаунты, deliverability, domain emails |
+| 11 | **Socialscan** 🆕 | `pip install socialscan` | Точная проверка регистрации на платформах (Instagram, GitHub, Twitter и др.) |
 
 ### Управление провайдерами
 
@@ -203,6 +206,8 @@ output:
 ```bash
 EMAILREP_API_KEY=your_key      # опционально — больше лимитов
 EMAILCRAWLR_API_KEY=your_key   # обязательно для EmailCrawlr
+# HudsonRock + Gravatar — бесплатные, ключ не нужен
+# Socialscan — ключ не нужен, требует: pip install email-osint-enricher[socialscan]
 ```
 
 ---

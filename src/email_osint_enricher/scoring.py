@@ -1,6 +1,6 @@
 """Scoring logic for email enrichment results.
 
-Учитывает все 8 провайдеров. Включает:
+Учитывает все 11 провайдеров. Включает:
   - email_footprint_score
   - identity_confidence_score
   - social_presence_score
@@ -27,6 +27,9 @@ from email_osint_enricher.schemas import (
     EmailRepResult,
     MosintResult,
     EmailCrawlrResult,
+    HudsonRockResult,
+    GravatarResult,
+    SocialscanResult,
     InputRow,
     ProfileEntry,
 )
@@ -128,6 +131,9 @@ def compute_footprint_score(
     sherlock: SherlockResult | None = None,
     phone: PhoneExtractorResult | None = None,
     mosint: MosintResult | None = None,
+    hudsonrock: HudsonRockResult | None = None,
+    gravatar: GravatarResult | None = None,
+    socialscan: SocialscanResult | None = None,
 ) -> int:
     score = 0
 
@@ -163,6 +169,26 @@ def compute_footprint_score(
     if mosint and mosint.success and mosint.findings_count >= 2:
         score += 5
 
+    # HudsonRock: compromised email = it's been actively used (strong footprint signal)
+    if hudsonrock and hudsonrock.success and hudsonrock.is_compromised:
+        if hudsonrock.stealers_count >= 3:
+            score += 10
+        elif hudsonrock.stealers_count >= 1:
+            score += 6
+
+    # Gravatar: has profile = active identity
+    if gravatar and gravatar.success and gravatar.has_profile:
+        score += 8
+        if gravatar.linked_accounts_count >= 2:
+            score += 5
+
+    # Socialscan: registered platforms
+    if socialscan and socialscan.success:
+        if socialscan.registered_count >= 5:
+            score += 10
+        elif socialscan.registered_count >= 2:
+            score += 6
+
     return min(score, 100)
 
 
@@ -174,6 +200,7 @@ def compute_identity_confidence(
     maigret: MaigretResult | None = None,
     sherlock: SherlockResult | None = None,
     phone: PhoneExtractorResult | None = None,
+    gravatar: GravatarResult | None = None,
 ) -> int:
     score = 0
 
@@ -203,6 +230,18 @@ def compute_identity_confidence(
     if phone and phone.phone_candidate_best and phone.phone_candidate_confidence_score >= 50:
         score += 10
 
+    # Gravatar: real name / profile details strongly boost identity confidence
+    if gravatar and gravatar.success and gravatar.has_profile:
+        if gravatar.full_name:
+            score += 12
+            # Name match with applicantName
+            if row.applicantName and _names_match(gravatar.full_name, row.applicantName):
+                score += 10
+        elif gravatar.display_name:
+            score += 6
+        if gravatar.location:
+            score += 5
+
     return max(0, min(score, 100))
 
 
@@ -213,6 +252,8 @@ def compute_social_presence_score(
     sherlock: SherlockResult | None = None,
     emailcrawlr: EmailCrawlrResult | None = None,
     mosint: MosintResult | None = None,
+    gravatar: GravatarResult | None = None,
+    socialscan: SocialscanResult | None = None,
 ) -> int:
     """Aggregated social/online presence score (0-100)."""
     score = 0
@@ -248,12 +289,27 @@ def compute_social_presence_score(
     if mosint and mosint.success and mosint.social_signal:
         score += 5
 
+    # Gravatar linked accounts = social presence
+    if gravatar and gravatar.success and gravatar.has_profile:
+        if gravatar.linked_accounts_count >= 3:
+            score += 10
+        elif gravatar.linked_accounts_count >= 1:
+            score += 5
+
+    # Socialscan: platforms where email is registered
+    if socialscan and socialscan.success:
+        if socialscan.registered_count >= 5:
+            score += 10
+        elif socialscan.registered_count >= 2:
+            score += 5
+
     return min(score, 100)
 
 
 def compute_email_reputation_score(
     emailrep: EmailRepResult | None = None,
     emailcrawlr: EmailCrawlrResult | None = None,
+    hudsonrock: HudsonRockResult | None = None,
 ) -> int:
     """Email reputation score (0-100). Higher = better reputation."""
     score = 50  # neutral baseline
@@ -271,6 +327,13 @@ def compute_email_reputation_score(
     if emailcrawlr and emailcrawlr.success:
         if emailcrawlr.deliverability in ("true", True, "yes"):
             score += 5
+
+    # HudsonRock: compromised = lower reputation (security risk)
+    if hudsonrock and hudsonrock.success and hudsonrock.is_compromised:
+        if hudsonrock.stealers_count >= 3:
+            score -= 15  # Heavily compromised
+        elif hudsonrock.stealers_count >= 1:
+            score -= 8   # Some compromise
 
     return max(0, min(score, 100))
 
@@ -426,6 +489,9 @@ def score_result(
     emailrep: EmailRepResult | None = None,
     mosint: MosintResult | None = None,
     emailcrawlr: EmailCrawlrResult | None = None,
+    hudsonrock: HudsonRockResult | None = None,
+    gravatar: GravatarResult | None = None,
+    socialscan: SocialscanResult | None = None,
     has_mx: bool = True,
 ) -> EnrichmentResult:
     """Apply all scoring to an EnrichmentResult in-place and return it."""
@@ -440,15 +506,19 @@ def score_result(
     # Sub-scores
     result.email_footprint_score = compute_footprint_score(
         holehe, blackbird, maigret, sherlock, phone, mosint,
+        hudsonrock, gravatar, socialscan,
     )
     result.identity_confidence_score = compute_identity_confidence(
         holehe, row, EmailType(result.email_type),
-        blackbird, maigret, sherlock, phone,
+        blackbird, maigret, sherlock, phone, gravatar,
     )
     result.social_presence_score = compute_social_presence_score(
         holehe, blackbird, maigret, sherlock, emailcrawlr, mosint,
+        gravatar, socialscan,
     )
-    result.email_reputation_score = compute_email_reputation_score(emailrep, emailcrawlr)
+    result.email_reputation_score = compute_email_reputation_score(
+        emailrep, emailcrawlr, hudsonrock,
+    )
     result.deliverability_score = compute_deliverability_score(
         EmailType(result.email_type), has_mx, emailrep, emailcrawlr,
     )
@@ -500,6 +570,22 @@ def score_result(
         notes.append(f"Mos: {mosint.findings_count}f")
     if emailcrawlr and emailcrawlr.success:
         notes.append(f"EC: {emailcrawlr.social_accounts_count}soc")
+    if hudsonrock and hudsonrock.success:
+        if hudsonrock.is_compromised:
+            notes.append(f"HR: {hudsonrock.stealers_count} stealers")
+        else:
+            notes.append("HR: clean")
+    if gravatar and gravatar.success and gravatar.has_profile:
+        grav_parts = []
+        if gravatar.full_name:
+            grav_parts.append(gravatar.full_name)
+        elif gravatar.display_name:
+            grav_parts.append(gravatar.display_name)
+        if gravatar.linked_accounts_count > 0:
+            grav_parts.append(f"{gravatar.linked_accounts_count}acc")
+        notes.append(f"Grav: {', '.join(grav_parts) if grav_parts else 'profile'}")
+    if socialscan and socialscan.success and socialscan.registered_count > 0:
+        notes.append(f"SS: {socialscan.registered_count}reg")
     if phone and phone.phone_candidates_found:
         notes.append(f"Ph: {phone.phone_candidate_best or 'found'}")
     if result.error_message:
@@ -526,6 +612,9 @@ def score_result(
         ("emailrep", emailrep.checked if emailrep else False),
         ("mosint", mosint.checked if mosint else False),
         ("emailcrawlr", emailcrawlr.checked if emailcrawlr else False),
+        ("hudsonrock", hudsonrock.checked if hudsonrock else False),
+        ("gravatar", gravatar.checked if gravatar else False),
+        ("socialscan", socialscan.checked if socialscan else False),
         ("phone_extractor", phone.checked if phone else False),
     ]:
         if checked:

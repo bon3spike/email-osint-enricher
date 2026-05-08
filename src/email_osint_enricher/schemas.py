@@ -69,6 +69,9 @@ class AppConfig(BaseModel):
         "emailrep": ProviderConfig(enabled=True, timeout_seconds=60),
         "mosint": ProviderConfig(enabled=False, timeout_seconds=180),
         "emailcrawlr": ProviderConfig(enabled=False, timeout_seconds=60),
+        "hudsonrock": ProviderConfig(enabled=True, timeout_seconds=30),
+        "gravatar": ProviderConfig(enabled=True, timeout_seconds=15),
+        "socialscan": ProviderConfig(enabled=False, timeout_seconds=60),
     })
     batch: BatchConfig = Field(default_factory=BatchConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -201,6 +204,57 @@ class MosintResult(BaseModel):
 
 
 
+
+
+# ── New provider results (v0.4) ─────────────────────────────────────────────
+
+class HudsonRockResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    is_compromised: bool = False
+    stealers_count: int = 0
+    total_corporate_services: int = 0
+    total_user_services: int = 0
+    latest_compromise_date: str = ""
+    compromised_dates: str = ""
+    operating_systems: str = ""
+    confidence_score: float = 0.0
+    raw_json_path: Optional[str] = None
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class GravatarResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    has_profile: bool = False
+    display_name: str = ""
+    full_name: str = ""
+    avatar_url: str = ""
+    profile_url: str = ""
+    about_me: str = ""
+    location: str = ""
+    linked_accounts: list[str] = Field(default_factory=list)
+    linked_accounts_count: int = 0
+    profile_urls: list[str] = Field(default_factory=list)
+    confidence_score: float = 0.0
+    raw_json_path: Optional[str] = None
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class SocialscanResult(BaseModel):
+    checked: bool = False
+    success: bool = False
+    registered_platforms: list[str] = Field(default_factory=list)
+    registered_count: int = 0
+    not_registered_platforms: list[str] = Field(default_factory=list)
+    not_registered_count: int = 0
+    error_platforms: list[str] = Field(default_factory=list)
+    confidence_score: float = 0.0
+    raw_json_path: Optional[str] = None
+    error: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
 
 
 class EmailCrawlrResult(BaseModel):
@@ -343,6 +397,46 @@ class EnrichmentResult(BaseModel):
     emailcrawlr_confidence_score: float = 0.0
     emailcrawlr_error: Optional[str] = None
 
+    # ── HudsonRock ────────────────────────────────────────────────────────
+    hudsonrock_checked: bool = False
+    hudsonrock_success: bool = False
+    hudsonrock_is_compromised: bool = False
+    hudsonrock_stealers_count: int = 0
+    hudsonrock_total_corporate_services: int = 0
+    hudsonrock_total_user_services: int = 0
+    hudsonrock_latest_compromise_date: str = ""
+    hudsonrock_compromised_dates: str = ""
+    hudsonrock_operating_systems: str = ""
+    hudsonrock_confidence_score: float = 0.0
+    hudsonrock_raw_json_path: Optional[str] = None
+    hudsonrock_error: Optional[str] = None
+
+    # ── Gravatar ─────────────────────────────────────────────────────────
+    gravatar_checked: bool = False
+    gravatar_success: bool = False
+    gravatar_has_profile: bool = False
+    gravatar_display_name: str = ""
+    gravatar_full_name: str = ""
+    gravatar_avatar_url: str = ""
+    gravatar_profile_url: str = ""
+    gravatar_about_me: str = ""
+    gravatar_location: str = ""
+    gravatar_linked_accounts_count: int = 0
+    gravatar_linked_accounts: str = ""
+    gravatar_confidence_score: float = 0.0
+    gravatar_raw_json_path: Optional[str] = None
+    gravatar_error: Optional[str] = None
+
+    # ── Socialscan ───────────────────────────────────────────────────────
+    socialscan_checked: bool = False
+    socialscan_success: bool = False
+    socialscan_registered_count: int = 0
+    socialscan_registered_platforms: str = ""
+    socialscan_not_registered_count: int = 0
+    socialscan_confidence_score: float = 0.0
+    socialscan_raw_json_path: Optional[str] = None
+    socialscan_error: Optional[str] = None
+
     # ── Scoring ──────────────────────────────────────────────────────────
     email_footprint_score: int = 0
     identity_confidence_score: int = 0
@@ -391,6 +485,12 @@ class RunSummary(BaseModel):
     mosint_successes: int = 0
     emailcrawlr_calls: int = 0
     emailcrawlr_successes: int = 0
+    hudsonrock_calls: int = 0
+    hudsonrock_successes: int = 0
+    gravatar_calls: int = 0
+    gravatar_successes: int = 0
+    socialscan_calls: int = 0
+    socialscan_successes: int = 0
     # Aggregates
     avg_footprint_score: float = 0.0
     avg_identity_score: float = 0.0

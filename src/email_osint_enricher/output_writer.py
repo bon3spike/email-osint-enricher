@@ -26,6 +26,20 @@ OUTPUT_FIELDS = [
     "holehe_social_services_count", "holehe_professional_services_count",
     "holehe_recovery_hints_count", "holehe_raw_json_path",
     "holehe_confidence_score",
+    # HudsonRock
+    "hudsonrock_checked", "hudsonrock_success",
+    "hudsonrock_is_compromised", "hudsonrock_stealers_count",
+    "hudsonrock_latest_compromise_date", "hudsonrock_confidence_score",
+    # Gravatar
+    "gravatar_checked", "gravatar_success",
+    "gravatar_has_profile", "gravatar_display_name", "gravatar_full_name",
+    "gravatar_avatar_url", "gravatar_location",
+    "gravatar_linked_accounts_count", "gravatar_linked_accounts",
+    "gravatar_confidence_score",
+    # Socialscan
+    "socialscan_checked", "socialscan_success",
+    "socialscan_registered_count", "socialscan_registered_platforms",
+    "socialscan_confidence_score",
     # Scoring
     "email_footprint_score", "identity_confidence_score",
     "outreach_enrichment_tier", "manual_review_needed",
