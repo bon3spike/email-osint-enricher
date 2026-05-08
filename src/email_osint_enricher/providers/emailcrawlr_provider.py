@@ -100,7 +100,7 @@ class EmailCrawlrProvider(BaseProvider):
                 result.confidence_score = min(conf, 1.0)
 
                 result.raw = data
-                result.raw_json_path = self._save_raw(context.email, data)
+                result.raw_json_path = self.save_raw(context.email, data)
 
         except httpx.TimeoutException:
             result.error = "timeout"
@@ -123,11 +123,3 @@ class EmailCrawlrProvider(BaseProvider):
             "emailcrawlr_error": result.error,
         }
 
-    def _save_raw(self, email: str, data: dict) -> Optional[str]:
-        if not self.raw_output_dir:
-            return None
-        self.raw_output_dir.mkdir(parents=True, exist_ok=True)
-        safe = email.replace("@", "_at_").replace(".", "_")
-        path = self.raw_output_dir / f"{safe}.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
-        return str(path)

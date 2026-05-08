@@ -1,17 +1,11 @@
 """Core enrichment pipeline — orchestrates providers, scoring, and output.
 
-Порядок выполнения провайдеров (11 штук, все параллельно кроме phone_extractor):
-  1. Holehe      — email → registered accounts
-  2. Blackbird   — email + username → profiles (600+ платформ)
-  3. Maigret     — deep username OSINT (dossier)
-  4. Sherlock    — fast username fallback (400+ платформ)
-  5. EmailRep    — email reputation/risk (API)
-  6. Mosint      — email OSINT (Go subprocess)
-  7. EmailCrawlr — email intelligence (API)
-  8. HudsonRock  — cybercrime intelligence (infostealers)
-  9. Gravatar    — profile/avatar lookup (MD5 hash)
-  10. Socialscan  — accurate platform registration check
-  11. phone_extractor — публичные телефоны из найденных профилей (always last)
+v0.5.0 — Refactored: generic provider runner, shared HTTP session,
+parallel DNS precheck, DRY result mapping.
+
+Provider execution order (11, all parallel except phone_extractor):
+  1-10. All main providers via asyncio.gather()
+  11. phone_extractor — runs last (needs profile URLs from others)
 """
 
 from __future__ import annotations
@@ -21,8 +15,9 @@ import datetime as dt
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+import httpx
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from email_osint_enricher.config import load_config
@@ -34,22 +29,11 @@ from email_osint_enricher.email_utils import (
     is_google_workspace,
     mask_email,
     normalize_email,
-    precheck_domains,
+    precheck_domains_async,
 )
 from email_osint_enricher.output_writer import write_results
 from email_osint_enricher.providers import PROVIDER_REGISTRY
-from email_osint_enricher.providers.base import ProviderContext
-from email_osint_enricher.providers.holehe_provider import HoleheProvider
-from email_osint_enricher.providers.blackbird_provider import BlackbirdProvider
-from email_osint_enricher.providers.maigret_provider import MaigretProvider
-from email_osint_enricher.providers.sherlock_provider import SherlockProvider
-from email_osint_enricher.providers.phone_extractor import PhoneExtractorProvider
-from email_osint_enricher.providers.emailrep_provider import EmailRepProvider
-from email_osint_enricher.providers.mosint_provider import MosintProvider
-from email_osint_enricher.providers.emailcrawlr_provider import EmailCrawlrProvider
-from email_osint_enricher.providers.hudsonrock_provider import HudsonRockProvider
-from email_osint_enricher.providers.gravatar_provider import GravatarProvider
-from email_osint_enricher.providers.socialscan_provider import SocialscanProvider
+from email_osint_enricher.providers.base import BaseProvider, ProviderContext
 from email_osint_enricher.schemas import (
     AppConfig,
     EmailType,
@@ -73,6 +57,49 @@ from email_osint_enricher.scoring import classify_holehe_services, score_result
 from email_osint_enricher.username_utils import generate_username_candidates
 
 logger = logging.getLogger("enricher")
+
+# ── Result type registry (provider_name → default empty result class) ────────
+_EMPTY_RESULT_MAP: dict[str, type] = {
+    "holehe": HoleheResult,
+    "blackbird": BlackbirdResult,
+    "maigret": MaigretResult,
+    "sherlock": SherlockResult,
+    "phone_extractor": PhoneExtractorResult,
+    "emailrep": EmailRepResult,
+    "mosint": MosintResult,
+    "emailcrawlr": EmailCrawlrResult,
+    "hudsonrock": HudsonRockResult,
+    "gravatar": GravatarResult,
+    "socialscan": SocialscanResult,
+}
+
+# Providers that produce profile URLs for phone extraction
+_PROFILE_PROVIDERS = {"blackbird", "maigret", "sherlock"}
+
+# Providers that should NOT run in the main parallel batch (run after)
+_DEFERRED_PROVIDERS = {"phone_extractor"}
+
+
+def _map_provider_result(result: EnrichmentResult, name: str, res: Any) -> None:
+    """Map a provider result object onto the flat EnrichmentResult fields.
+
+    Uses normalize_result() dict from the result to set `result.{prefix}_{field}`.
+    For list fields, joins with ', '.
+    """
+    data = res.model_dump()
+    prefix = name
+
+    for field_name, value in data.items():
+        target = f"{prefix}_{field_name}"
+        if hasattr(result, target):
+            # Convert lists to comma-separated strings for flat output
+            if isinstance(value, list):
+                if value and hasattr(value[0], "phone_number"):
+                    # PhoneCandidate objects
+                    value = ", ".join(c.phone_number if hasattr(c, "phone_number") else str(c) for c in value[:10])
+                else:
+                    value = ", ".join(str(v) for v in value[:20])
+            setattr(result, target, value)
 
 
 class EnrichmentPipeline:
@@ -113,79 +140,97 @@ class EnrichmentPipeline:
                     self.active_providers.add(name)
 
         # Init providers
-        self._providers = self._init_providers()
+        self._providers: dict[str, BaseProvider] = self._init_providers()
 
         self.semaphore = asyncio.Semaphore(self.config.batch.concurrency)
         self.delay = self.config.batch.delay_seconds
         self.max_retries = self.config.batch.max_retries
         self.mask = self.config.logging.mask_emails
 
+        # Shared HTTP client (created lazily, closed after batch)
+        self._http_client: Optional[httpx.AsyncClient] = None
+
         # Resume state
         self._completed_emails: set[str] = set()
         if self.resume:
             self._load_resume_state()
 
-    def _init_providers(self) -> dict:
-        """Инициализировать все активные провайдеры."""
-        providers = {}
+    def _init_providers(self) -> dict[str, BaseProvider]:
+        """Initialize all active providers."""
+        providers: dict[str, BaseProvider] = {}
+        default_cfg = AppConfig()
 
         for name in self.active_providers:
-            cfg = self.config.providers.get(name, AppConfig().providers.get(name))
+            cls = PROVIDER_REGISTRY.get(name)
+            if not cls:
+                logger.warning(f"Unknown provider: {name}")
+                continue
+
+            cfg = self.config.providers.get(name, default_cfg.providers.get(name))
             timeout = cfg.timeout_seconds if cfg else 120
             raw_dir = self.output_dir / "raw" / name if self.config.output.save_raw_json else None
 
-            if name == "holehe":
-                providers[name] = HoleheProvider(timeout=timeout, raw_output_dir=raw_dir, proxy=self.proxy)
-            elif name == "blackbird":
-                providers[name] = BlackbirdProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "maigret":
-                providers[name] = MaigretProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "sherlock":
-                providers[name] = SherlockProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "phone_extractor":
-                providers[name] = PhoneExtractorProvider(
-                    timeout=timeout, raw_output_dir=raw_dir, proxy=self.proxy,
-                )
-            elif name == "emailrep":
-                providers[name] = EmailRepProvider(timeout=timeout, raw_output_dir=raw_dir)
-            elif name == "mosint":
-                providers[name] = MosintProvider(timeout=timeout, raw_output_dir=raw_dir)
+            # All providers accept timeout + raw_output_dir via BaseProvider.__init__
+            # Some accept extra kwargs (proxy, etc.)
+            kwargs: dict[str, Any] = {"timeout": timeout, "raw_output_dir": raw_dir}
+            if name in ("holehe", "phone_extractor"):
+                kwargs["proxy"] = self.proxy
 
-            elif name == "emailcrawlr":
-                providers[name] = EmailCrawlrProvider(timeout=timeout, raw_output_dir=raw_dir)
-
-            elif name == "hudsonrock":
-                providers[name] = HudsonRockProvider(timeout=timeout, raw_output_dir=raw_dir)
-
-            elif name == "gravatar":
-                providers[name] = GravatarProvider(timeout=timeout, raw_output_dir=raw_dir)
-
-            elif name == "socialscan":
-                providers[name] = SocialscanProvider(timeout=timeout, raw_output_dir=raw_dir)
+            try:
+                providers[name] = cls(**kwargs)
+            except Exception as e:
+                logger.error(f"Failed to init provider {name}: {e}")
 
         return providers
 
-    def _load_resume_state(self):
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """Get or create shared HTTP client with connection pooling."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                timeout=30,
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                ),
+                headers={
+                    "User-Agent": "email-osint-enricher/0.5",
+                    "Accept": "application/json",
+                },
+            )
+        return self._http_client
+
+    async def _close_http_client(self) -> None:
+        """Close the shared HTTP client."""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
+
+    def _load_resume_state(self) -> None:
         """Load already-processed emails from previous run's JSONL."""
         jsonl_path = self.output_dir / "enriched_results.jsonl"
-        if jsonl_path.exists():
-            count = 0
-            with open(jsonl_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                        email = data.get("email_normalized") or data.get("email", "")
-                        status = data.get("status", "")
-                        if status in ("success", "partial") and email:
-                            self._completed_emails.add(email)
-                            count += 1
-                    except json.JSONDecodeError:
-                        continue
-            if count:
-                logger.info(f"Resume mode: loaded {count} previously completed emails")
+        if not jsonl_path.exists():
+            return
+
+        count = 0
+        with open(jsonl_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    email = data.get("email_normalized") or data.get("email", "")
+                    status = data.get("status", "")
+                    if status in ("success", "partial") and email:
+                        self._completed_emails.add(email)
+                        count += 1
+                except json.JSONDecodeError:
+                    continue
+
+        if count:
+            logger.info(f"Resume mode: loaded {count} previously completed emails")
+
+    # ── Single email processing ──────────────────────────────────────────
 
     async def process_single(self, row: InputRow) -> EnrichmentResult:
         """Process a single email through the full pipeline."""
@@ -218,41 +263,30 @@ class EnrichmentPipeline:
             tier=row.tier,
         )
 
-        # Empty results for scoring
-        holehe_res = HoleheResult()
-        blackbird_res = BlackbirdResult()
-        maigret_res = MaigretResult()
-        sherlock_res = SherlockResult()
-        phone_res = PhoneExtractorResult()
-        emailrep_res = EmailRepResult()
-        mosint_res = MosintResult()
-        emailcrawlr_res = EmailCrawlrResult()
-        hudsonrock_res = HudsonRockResult()
-        gravatar_res = GravatarResult()
-        socialscan_res = SocialscanResult()
+        # Provider results registry (filled during execution)
+        provider_results: dict[str, Any] = {
+            name: cls() for name, cls in _EMPTY_RESULT_MAP.items()
+        }
 
-        # ── Resume check ────────────────────────────────────────────────
+        # ── Early exits ─────────────────────────────────────────────────
+        holehe_res_empty = HoleheResult()
+
         if self.resume and normalized in self._completed_emails:
             result.status = ProcessingStatus.skipped.value
             result.error_message = "already processed (resume mode)"
             logger.debug(f"Skipping already-processed: {email_display}")
-            result = score_result(result, holehe_res, row)
-            return result
+            return score_result(result, holehe_res_empty, row)
 
-        # ── MX check ────────────────────────────────────────────────────
         if domain and not domain_has_mx:
             result.status = ProcessingStatus.skipped.value
             result.error_message = f"Domain {domain} has no MX records"
             logger.info(f"Skipping {email_display}: no MX records for {domain}")
-            result = score_result(result, holehe_res, row)
-            return result
+            return score_result(result, holehe_res_empty, row)
 
-        # ── Dry-run ─────────────────────────────────────────────────────
         if self.dry_run:
             result.status = ProcessingStatus.skipped.value
             result.error_message = "dry-run mode"
-            result = score_result(result, holehe_res, row)
-            return result
+            return score_result(result, holehe_res_empty, row)
 
         # ── Generate username candidates ─────────────────────────────────
         usernames = generate_username_candidates(email, row.applicantName)
@@ -274,286 +308,67 @@ class EnrichmentPipeline:
             proxy=self.proxy,
         )
 
-        # ── Run providers in parallel ────────────────────────────────────
-        # All main providers run concurrently; phone_extractor runs last
-        # (it needs profiles_found from other providers).
-
-        async def _run_holehe():
-            nonlocal holehe_res
-            if "holehe" not in self._providers:
+        # ── Run main providers in parallel ───────────────────────────────
+        async def _run_provider(name: str) -> None:
+            if name not in self._providers:
                 return
-            prov = self._providers["holehe"]
+            prov = self._providers[name]
             if not await prov.should_run(context):
                 return
-            logger.info(f"Running Holehe for {email_display}")
-            holehe_res = await self._run_with_retry(prov.run, context, "holehe")
-            if holehe_res.success and holehe_res.registered_services_list:
-                social, prof = classify_holehe_services(holehe_res.registered_services_list)
-                holehe_res.social_services_count = social
-                holehe_res.professional_services_count = prof
+            logger.info(f"Running {name.title()} for {email_display}")
+            res = await self._run_with_retry(prov.run, context, name)
 
-        async def _run_blackbird():
-            nonlocal blackbird_res
-            if "blackbird" not in self._providers:
-                return
-            prov = self._providers["blackbird"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running Blackbird for {email_display}")
-            blackbird_res = await self._run_with_retry(prov.run, context, "blackbird")
+            # Post-processing hooks
+            if name == "holehe" and res.success and res.registered_services_list:
+                social, prof = classify_holehe_services(res.registered_services_list)
+                res.social_services_count = social
+                res.professional_services_count = prof
 
-        async def _run_maigret():
-            nonlocal maigret_res
-            if "maigret" not in self._providers:
-                return
-            prov = self._providers["maigret"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running Maigret for {email_display}")
-            maigret_res = await self._run_with_retry(prov.run, context, "maigret")
+            provider_results[name] = res
 
-        async def _run_sherlock():
-            nonlocal sherlock_res
-            if "sherlock" not in self._providers:
-                return
-            prov = self._providers["sherlock"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running Sherlock for {email_display}")
-            sherlock_res = await self._run_with_retry(prov.run, context, "sherlock")
+        # Run all except phone_extractor in parallel
+        main_providers = [n for n in self._providers if n not in _DEFERRED_PROVIDERS]
+        await asyncio.gather(*[_run_provider(n) for n in main_providers])
 
-        async def _run_emailrep():
-            nonlocal emailrep_res
-            if "emailrep" not in self._providers:
-                return
-            prov = self._providers["emailrep"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running EmailRep for {email_display}")
-            emailrep_res = await self._run_with_retry(prov.run, context, "emailrep")
-
-        async def _run_mosint():
-            nonlocal mosint_res
-            if "mosint" not in self._providers:
-                return
-            prov = self._providers["mosint"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running Mosint for {email_display}")
-            mosint_res = await self._run_with_retry(prov.run, context, "mosint")
-
-        async def _run_emailcrawlr():
-            nonlocal emailcrawlr_res
-            if "emailcrawlr" not in self._providers:
-                return
-            prov = self._providers["emailcrawlr"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running EmailCrawlr for {email_display}")
-            emailcrawlr_res = await self._run_with_retry(prov.run, context, "emailcrawlr")
-
-        async def _run_hudsonrock():
-            nonlocal hudsonrock_res
-            if "hudsonrock" not in self._providers:
-                return
-            prov = self._providers["hudsonrock"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running HudsonRock for {email_display}")
-            hudsonrock_res = await self._run_with_retry(prov.run, context, "hudsonrock")
-
-        async def _run_gravatar():
-            nonlocal gravatar_res
-            if "gravatar" not in self._providers:
-                return
-            prov = self._providers["gravatar"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running Gravatar for {email_display}")
-            gravatar_res = await self._run_with_retry(prov.run, context, "gravatar")
-
-        async def _run_socialscan():
-            nonlocal socialscan_res
-            if "socialscan" not in self._providers:
-                return
-            prov = self._providers["socialscan"]
-            if not await prov.should_run(context):
-                return
-            logger.info(f"Running Socialscan for {email_display}")
-            socialscan_res = await self._run_with_retry(prov.run, context, "socialscan")
-
-        # Run all main providers in parallel
-        await asyncio.gather(
-            _run_holehe(),
-            _run_blackbird(),
-            _run_maigret(),
-            _run_sherlock(),
-            _run_emailrep(),
-            _run_mosint(),
-            _run_emailcrawlr(),
-            _run_hudsonrock(),
-            _run_gravatar(),
-            _run_socialscan(),
-        )
-
-        # Collect profiles from completed providers for phone extractor
-        for res in [blackbird_res, maigret_res, sherlock_res]:
-            if res.profiles_list:
+        # Collect profile URLs for phone extractor
+        for pname in _PROFILE_PROVIDERS:
+            res = provider_results.get(pname)
+            if res and hasattr(res, "profiles_list") and res.profiles_list:
                 context.profiles_found.extend(res.profiles_list)
 
-        # Phone extractor runs last — needs profiles_found from all others
+        # Run phone_extractor last (needs profiles from others)
         if "phone_extractor" in self._providers:
             prov = self._providers["phone_extractor"]
             if await prov.should_run(context):
                 logger.info(f"Running Phone Extractor for {email_display} ({len(context.profiles_found)} URLs)")
-                phone_res = await self._run_with_retry(prov.run, context, "phone_extractor")
+                provider_results["phone_extractor"] = await self._run_with_retry(
+                    prov.run, context, "phone_extractor"
+                )
 
-        # ── Map provider results to EnrichmentResult ─────────────────────
+        # ── Map all provider results → EnrichmentResult ──────────────────
+        for name, res in provider_results.items():
+            if not res.checked or name == "phone_extractor":
+                continue
+            _map_provider_result(result, name, res)
 
-        # Holehe
-        result.holehe_checked = holehe_res.checked
-        result.holehe_success = holehe_res.success
-        result.holehe_registered_services_count = holehe_res.registered_services_count
-        result.holehe_registered_services_list = (
-            ", ".join(holehe_res.registered_services_list)
-            if isinstance(holehe_res.registered_services_list, list)
-            else str(holehe_res.registered_services_list)
-        )
-        result.holehe_social_services_count = holehe_res.social_services_count
-        result.holehe_professional_services_count = holehe_res.professional_services_count
-        result.holehe_other_services_count = holehe_res.other_services_count
-        result.holehe_raw_json_path = holehe_res.raw_json_path
-        result.holehe_confidence_score = holehe_res.confidence_score
-        result.holehe_error = holehe_res.error
-
-        # Blackbird
-        result.blackbird_checked = blackbird_res.checked
-        result.blackbird_success = blackbird_res.success
-        result.blackbird_email_profiles_count = blackbird_res.email_profiles_count
-        result.blackbird_username_profiles_count = blackbird_res.username_profiles_count
-        result.blackbird_profiles_list = ", ".join(blackbird_res.profiles_list[:20])
-        result.blackbird_report_path = blackbird_res.report_path
-        result.blackbird_raw_json_path = blackbird_res.raw_json_path
-        result.blackbird_confidence_score = blackbird_res.confidence_score
-        result.blackbird_error = blackbird_res.error
-
-        # Maigret
-        result.maigret_checked = maigret_res.checked
-        result.maigret_success = maigret_res.success
-        result.maigret_username_candidates = ", ".join(maigret_res.username_candidates)
-        result.maigret_profiles_count = maigret_res.profiles_count
-        result.maigret_profiles_list = ", ".join(maigret_res.profiles_list[:20])
-        result.maigret_report_path = maigret_res.report_path
-        result.maigret_raw_json_path = maigret_res.raw_json_path
-        result.maigret_confidence_score = maigret_res.confidence_score
-        result.maigret_error = maigret_res.error
-
-        # Sherlock
-        result.sherlock_checked = sherlock_res.checked
-        result.sherlock_success = sherlock_res.success
-        result.sherlock_profiles_count = sherlock_res.profiles_count
-        result.sherlock_profiles_list = ", ".join(sherlock_res.profiles_list[:20])
-        result.sherlock_raw_json_path = sherlock_res.raw_json_path
-        result.sherlock_confidence_score = sherlock_res.confidence_score
-        result.sherlock_error = sherlock_res.error
-
-        # EmailRep
-        result.emailrep_checked = emailrep_res.checked
-        result.emailrep_success = emailrep_res.success
-        result.emailrep_reputation = emailrep_res.reputation
-        result.emailrep_suspicious = emailrep_res.suspicious
-        result.emailrep_references = emailrep_res.references
-        result.emailrep_details_summary = emailrep_res.details_summary
-        result.emailrep_risk_score = emailrep_res.risk_score
-        result.emailrep_raw_json_path = emailrep_res.raw_json_path
-        result.emailrep_error = emailrep_res.error
-
-        # Mosint
-        result.mosint_checked = mosint_res.checked
-        result.mosint_success = mosint_res.success
-        result.mosint_services_used = mosint_res.services_used
-        result.mosint_findings_count = mosint_res.findings_count
-        result.mosint_social_signal = mosint_res.social_signal
-        result.mosint_breach_signal = mosint_res.breach_signal
-        result.mosint_domain_signal = mosint_res.domain_signal
-        result.mosint_raw_json_path = mosint_res.raw_json_path
-        result.mosint_confidence_score = mosint_res.confidence_score
-        result.mosint_error = mosint_res.error
-
-        # EmailCrawlr
-        result.emailcrawlr_checked = emailcrawlr_res.checked
-        result.emailcrawlr_success = emailcrawlr_res.success
-        result.emailcrawlr_social_accounts_count = emailcrawlr_res.social_accounts_count
-        result.emailcrawlr_social_accounts_list = ", ".join(emailcrawlr_res.social_accounts_list)
-        result.emailcrawlr_deliverability = emailcrawlr_res.deliverability
-        result.emailcrawlr_domain_emails_count = emailcrawlr_res.domain_emails_count
-        result.emailcrawlr_raw_json_path = emailcrawlr_res.raw_json_path
-        result.emailcrawlr_confidence_score = emailcrawlr_res.confidence_score
-        result.emailcrawlr_error = emailcrawlr_res.error
-
-        # Phone extractor
-        result.phone_extractor_checked = phone_res.checked
-        result.phone_candidates_found = phone_res.phone_candidates_found
-        result.phone_candidates_count = phone_res.phone_candidates_count
-        result.phone_candidates_list = ", ".join(
-            c.phone_number for c in phone_res.phone_candidates_list[:10]
-        )
-        result.phone_candidate_best = phone_res.phone_candidate_best
-        result.phone_candidate_source_url = phone_res.phone_candidate_source_url
-        result.phone_candidate_source_provider = phone_res.phone_candidate_source_provider
-        result.phone_candidate_context = phone_res.phone_candidate_context
-        result.phone_candidate_confidence_score = phone_res.phone_candidate_confidence_score
-        result.phone_extraction_error = phone_res.phone_extraction_error
-
-        # HudsonRock
-        result.hudsonrock_checked = hudsonrock_res.checked
-        result.hudsonrock_success = hudsonrock_res.success
-        result.hudsonrock_is_compromised = hudsonrock_res.is_compromised
-        result.hudsonrock_stealers_count = hudsonrock_res.stealers_count
-        result.hudsonrock_total_corporate_services = hudsonrock_res.total_corporate_services
-        result.hudsonrock_total_user_services = hudsonrock_res.total_user_services
-        result.hudsonrock_latest_compromise_date = hudsonrock_res.latest_compromise_date
-        result.hudsonrock_compromised_dates = hudsonrock_res.compromised_dates
-        result.hudsonrock_operating_systems = hudsonrock_res.operating_systems
-        result.hudsonrock_confidence_score = hudsonrock_res.confidence_score
-        result.hudsonrock_raw_json_path = hudsonrock_res.raw_json_path
-        result.hudsonrock_error = hudsonrock_res.error
-
-        # Gravatar
-        result.gravatar_checked = gravatar_res.checked
-        result.gravatar_success = gravatar_res.success
-        result.gravatar_has_profile = gravatar_res.has_profile
-        result.gravatar_display_name = gravatar_res.display_name
-        result.gravatar_full_name = gravatar_res.full_name
-        result.gravatar_avatar_url = gravatar_res.avatar_url
-        result.gravatar_profile_url = gravatar_res.profile_url
-        result.gravatar_about_me = gravatar_res.about_me
-        result.gravatar_location = gravatar_res.location
-        result.gravatar_linked_accounts_count = gravatar_res.linked_accounts_count
-        result.gravatar_linked_accounts = ", ".join(gravatar_res.linked_accounts)
-        result.gravatar_confidence_score = gravatar_res.confidence_score
-        result.gravatar_raw_json_path = gravatar_res.raw_json_path
-        result.gravatar_error = gravatar_res.error
-
-        # Socialscan
-        result.socialscan_checked = socialscan_res.checked
-        result.socialscan_success = socialscan_res.success
-        result.socialscan_registered_count = socialscan_res.registered_count
-        result.socialscan_registered_platforms = ", ".join(socialscan_res.registered_platforms)
-        result.socialscan_not_registered_count = socialscan_res.not_registered_count
-        result.socialscan_confidence_score = socialscan_res.confidence_score
-        result.socialscan_raw_json_path = socialscan_res.raw_json_path
-        result.socialscan_error = socialscan_res.error
+        # Fix phone_extractor field naming (uses different prefix pattern)
+        pe = provider_results["phone_extractor"]
+        if pe.checked:
+            result.phone_extractor_checked = pe.checked
+            result.phone_candidates_found = pe.phone_candidates_found
+            result.phone_candidates_count = pe.phone_candidates_count
+            result.phone_candidates_list = ", ".join(
+                c.phone_number for c in pe.phone_candidates_list[:10]
+            ) if hasattr(pe, "phone_candidates_list") else ""
+            result.phone_candidate_best = pe.phone_candidate_best
+            result.phone_candidate_source_url = pe.phone_candidate_source_url
+            result.phone_candidate_source_provider = pe.phone_candidate_source_provider
+            result.phone_candidate_context = pe.phone_candidate_context
+            result.phone_candidate_confidence_score = pe.phone_candidate_confidence_score
+            result.phone_extraction_error = pe.phone_extraction_error
 
         # ── Determine status ─────────────────────────────────────────────
-        all_results = [
-            holehe_res, blackbird_res, maigret_res,
-            sherlock_res, phone_res,
-            emailrep_res, mosint_res,
-            emailcrawlr_res,
-            hudsonrock_res, gravatar_res, socialscan_res,
-        ]
-        checked = [r for r in all_results if r.checked]
+        checked = [r for r in provider_results.values() if r.checked]
         successes = [r for r in checked if r.success]
 
         if not checked:
@@ -566,30 +381,20 @@ class EnrichmentPipeline:
             result.status = ProcessingStatus.failed.value
 
         # ── Score ────────────────────────────────────────────────────────
+        holehe_res = provider_results["holehe"]
         result = score_result(
             result, holehe_res, row,
-            blackbird=blackbird_res if blackbird_res.checked else None,
-            maigret=maigret_res if maigret_res.checked else None,
-            sherlock=sherlock_res if sherlock_res.checked else None,
-            phone=phone_res if phone_res.checked else None,
-            emailrep=emailrep_res if emailrep_res.checked else None,
-            mosint=mosint_res if mosint_res.checked else None,
-            emailcrawlr=emailcrawlr_res if emailcrawlr_res.checked else None,
-            hudsonrock=hudsonrock_res if hudsonrock_res.checked else None,
-            gravatar=gravatar_res if gravatar_res.checked else None,
-            socialscan=socialscan_res if socialscan_res.checked else None,
+            **{
+                name: (res if res.checked else None)
+                for name, res in provider_results.items()
+                if name != "holehe"
+            },
         )
 
         return result
 
     async def _run_with_retry(self, coro_fn, context, provider: str):
         """Run a provider coroutine with retries and exponential backoff."""
-        from email_osint_enricher.schemas import (
-            EmailRepResult, MosintResult,
-            EmailCrawlrResult, HudsonRockResult,
-            GravatarResult, SocialscanResult,
-        )
-
         last_exc = None
         for attempt in range(1, self.max_retries + 1):
             try:
@@ -610,20 +415,15 @@ class EnrichmentPipeline:
                 return await coro_fn(context)
         except Exception as e:
             logger.error(f"{provider} all retries exhausted: {e}")
-            empty_results = {
-                "holehe": HoleheResult(checked=True, success=False, error=str(e)),
-                "blackbird": BlackbirdResult(checked=True, success=False, error=str(e)),
-                "maigret": MaigretResult(checked=True, success=False, error=str(e)),
-                "sherlock": SherlockResult(checked=True, success=False, error=str(e)),
-                "phone_extractor": PhoneExtractorResult(checked=True, success=False, phone_extraction_error=str(e)),
-                "emailrep": EmailRepResult(checked=True, success=False, error=str(e)),
-                "mosint": MosintResult(checked=True, success=False, error=str(e)),
-                "emailcrawlr": EmailCrawlrResult(checked=True, success=False, error=str(e)),
-                "hudsonrock": HudsonRockResult(checked=True, success=False, error=str(e)),
-                "gravatar": GravatarResult(checked=True, success=False, error=str(e)),
-                "socialscan": SocialscanResult(checked=True, success=False, error=str(e)),
-            }
-            return empty_results.get(provider, HoleheResult(checked=True, success=False))
+            result_cls = _EMPTY_RESULT_MAP.get(provider, HoleheResult)
+            err_result = result_cls(checked=True, success=False)
+            if hasattr(err_result, "error"):
+                err_result.error = str(e)
+            elif hasattr(err_result, "phone_extraction_error"):
+                err_result.phone_extraction_error = str(e)
+            return err_result
+
+    # ── Batch processing ─────────────────────────────────────────────────
 
     async def process_batch(self, rows: list[InputRow]) -> tuple[list[EnrichmentResult], RunSummary]:
         """Process a batch of emails with progress bar and rate limiting."""
@@ -663,11 +463,11 @@ class EnrichmentPipeline:
         if duplicate_count:
             logger.info(f"Deduplicated: {duplicate_count} duplicates removed, {len(unique_rows)} unique")
 
-        # ── Domain precheck ──────────────────────────────────────────────
+        # ── Domain precheck (parallel) ───────────────────────────────────
         if not self.dry_run:
-            logger.info("Pre-checking domains...")
+            logger.info("Pre-checking domains (parallel)...")
             all_emails = [r.email for r in unique_rows]
-            domain_info = precheck_domains(all_emails)
+            domain_info = await precheck_domains_async(all_emails)
             mx_ok = sum(1 for d in domain_info.values() if d["has_mx"])
             gws_count = sum(1 for d in domain_info.values() if d["is_google_workspace"])
             logger.info(
@@ -691,11 +491,10 @@ class EnrichmentPipeline:
             jsonl_path = self.output_dir / "enriched_results_partial.jsonl"
             self.output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Use semaphore for concurrent email processing
             email_semaphore = asyncio.Semaphore(self.config.batch.concurrency)
             results_lock = asyncio.Lock()
 
-            async def _process_one(row: InputRow):
+            async def _process_one(row: InputRow) -> None:
                 async with email_semaphore:
                     try:
                         result = await self.process_single(row)
@@ -723,14 +522,18 @@ class EnrichmentPipeline:
                     if self.delay > 0 and not self.dry_run:
                         await asyncio.sleep(self.delay)
 
-            with open(jsonl_path, "a", encoding="utf-8") as jsonl_f:
-                # Process all emails concurrently (limited by semaphore)
-                await asyncio.gather(*[_process_one(row) for row in unique_rows])
+            try:
+                with open(jsonl_path, "a", encoding="utf-8") as jsonl_f:
+                    await asyncio.gather(*[_process_one(row) for row in unique_rows])
+            finally:
+                await self._close_http_client()
 
         finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
         summary = self._build_summary(results, started_at, finished_at)
 
         return results, summary
+
+    # ── Summary builder ──────────────────────────────────────────────────
 
     def _build_summary(
         self,
@@ -751,62 +554,35 @@ class EnrichmentPipeline:
         identity_scores: list[int] = []
         final_scores: list[int] = []
 
+        # Provider stats: collect dynamically to avoid listing each one
+        provider_calls: dict[str, int] = {}
+        provider_successes: dict[str, int] = {}
+
         for r in results:
             summary.processed += 1
-            if r.status == ProcessingStatus.success.value:
+            status_val = r.status if isinstance(r.status, str) else r.status.value
+            if status_val == "success":
                 summary.success += 1
-            elif r.status == ProcessingStatus.partial.value:
+            elif status_val == "partial":
                 summary.partial += 1
-            elif r.status == ProcessingStatus.failed.value:
+            elif status_val == "failed":
                 summary.failed += 1
-            elif r.status == ProcessingStatus.skipped.value:
+            elif status_val == "skipped":
                 summary.skipped += 1
 
-            # Per-provider stats
-            if r.holehe_checked:
-                summary.holehe_calls += 1
-            if r.holehe_success:
-                summary.holehe_successes += 1
-            if r.blackbird_checked:
-                summary.blackbird_calls += 1
-            if r.blackbird_success:
-                summary.blackbird_successes += 1
-            if r.maigret_checked:
-                summary.maigret_calls += 1
-            if r.maigret_success:
-                summary.maigret_successes += 1
-            if r.sherlock_checked:
-                summary.sherlock_calls += 1
-            if r.sherlock_success:
-                summary.sherlock_successes += 1
-            if r.phone_extractor_checked:
-                summary.phone_extractor_calls += 1
-            if r.phone_candidates_found:
-                summary.phone_extractor_successes += 1
-            if r.emailrep_checked:
-                summary.emailrep_calls += 1
-            if r.emailrep_success:
-                summary.emailrep_successes += 1
-            if r.mosint_checked:
-                summary.mosint_calls += 1
-            if r.mosint_success:
-                summary.mosint_successes += 1
-            if r.emailcrawlr_checked:
-                summary.emailcrawlr_calls += 1
-            if r.emailcrawlr_success:
-                summary.emailcrawlr_successes += 1
-            if r.hudsonrock_checked:
-                summary.hudsonrock_calls += 1
-            if r.hudsonrock_success:
-                summary.hudsonrock_successes += 1
-            if r.gravatar_checked:
-                summary.gravatar_calls += 1
-            if r.gravatar_success:
-                summary.gravatar_successes += 1
-            if r.socialscan_checked:
-                summary.socialscan_calls += 1
-            if r.socialscan_success:
-                summary.socialscan_successes += 1
+            # Per-provider stats (generic)
+            for pname in _EMPTY_RESULT_MAP:
+                checked_attr = f"{pname}_checked"
+                success_attr = f"{pname}_success"
+                # phone_extractor uses different field names
+                if pname == "phone_extractor":
+                    checked_attr = "phone_extractor_checked"
+                    success_attr = "phone_candidates_found"
+
+                if getattr(r, checked_attr, False):
+                    provider_calls[pname] = provider_calls.get(pname, 0) + 1
+                if getattr(r, success_attr, False):
+                    provider_successes[pname] = provider_successes.get(pname, 0) + 1
 
             summary.total_profiles_discovered += r.total_profiles_found
             summary.total_phone_candidates += r.phone_candidates_count
@@ -815,6 +591,15 @@ class EnrichmentPipeline:
             footprint_scores.append(r.email_footprint_score)
             identity_scores.append(r.identity_confidence_score)
             final_scores.append(r.final_enrichment_score)
+
+        # Map to summary fields
+        for pname in _EMPTY_RESULT_MAP:
+            calls_attr = f"{pname}_calls"
+            succ_attr = f"{pname}_successes"
+            if hasattr(summary, calls_attr):
+                setattr(summary, calls_attr, provider_calls.get(pname, 0))
+            if hasattr(summary, succ_attr):
+                setattr(summary, succ_attr, provider_successes.get(pname, 0))
 
         summary.tier_distribution = tier_dist
         if footprint_scores:
@@ -825,6 +610,8 @@ class EnrichmentPipeline:
             summary.avg_final_score = round(sum(final_scores) / len(final_scores), 2)
 
         return summary
+
+    # ── Output writer ────────────────────────────────────────────────────
 
     def write_output(
         self,

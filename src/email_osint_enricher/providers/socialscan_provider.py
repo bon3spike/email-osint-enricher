@@ -132,7 +132,7 @@ class SocialscanProvider(BaseProvider):
                 "errors": errors,
             }
             result.raw = raw_data
-            result.raw_json_path = self._save_raw(context.email, raw_data)
+            result.raw_json_path = self.save_raw(context.email, raw_data)
 
         except ImportError:
             logger.error("socialscan import failed")
@@ -155,11 +155,3 @@ class SocialscanProvider(BaseProvider):
             "socialscan_error": result.error,
         }
 
-    def _save_raw(self, email: str, data: dict) -> Optional[str]:
-        if not self.raw_output_dir:
-            return None
-        self.raw_output_dir.mkdir(parents=True, exist_ok=True)
-        safe = email.replace("@", "_at_").replace(".", "_")
-        path = self.raw_output_dir / f"{safe}.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        return str(path)

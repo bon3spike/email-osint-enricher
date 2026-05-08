@@ -270,8 +270,8 @@ def _print_result_table(results):
     table.add_column("Type", style="dim")
     table.add_column("Status", style="bold")
     table.add_column("Holehe", style="blue")
-    table.add_column("BB/Mai/Sher", style="magenta")
-    table.add_column("ER/Rep", style="cyan")
+    table.add_column("Profiles", style="magenta")
+    table.add_column("Cyber/Rep", style="cyan")
     table.add_column("Phone", style="yellow")
     table.add_column("Final", justify="right")
     table.add_column("Tier", style="bold")
@@ -294,7 +294,7 @@ def _print_result_table(results):
             if r.holehe_registered_services_count > 0:
                 holehe_info += f" {r.holehe_registered_services_count}svc"
 
-        # Blackbird / Maigret / Sherlock (combined)
+        # Blackbird / Maigret / Sherlock / Socialscan (combined profiles)
         parts = []
         if r.blackbird_checked and r.blackbird_success:
             bb_total = r.blackbird_email_profiles_count + r.blackbird_username_profiles_count
@@ -303,14 +303,25 @@ def _print_result_table(results):
             parts.append(f"M:{r.maigret_profiles_count}")
         if r.sherlock_checked and r.sherlock_success:
             parts.append(f"S:{r.sherlock_profiles_count}")
+        if r.socialscan_checked and r.socialscan_success:
+            parts.append(f"SS:{r.socialscan_registered_count}")
+        if r.gravatar_checked and r.gravatar_has_profile:
+            parts.append("GR:✓")
         profile_info = " ".join(parts) if parts else "—"
 
-        # EmailRep
-        er_info = ""
+        # Cyber & Reputation (HudsonRock + EmailRep)
+        cyber_parts = []
+        if r.hudsonrock_checked and r.hudsonrock_success:
+            if r.hudsonrock_is_compromised:
+                cyber_parts.append(f"HR:⚠{r.hudsonrock_stealers_count}")
+            else:
+                cyber_parts.append("HR:✓")
         if r.emailrep_checked:
-            er_info = f"{'✓' if r.emailrep_success else '✗'}"
+            tag = "✓" if r.emailrep_success else "✗"
             if r.emailrep_reputation:
-                er_info += f" {r.emailrep_reputation[:4]}"
+                tag += f" {r.emailrep_reputation[:4]}"
+            cyber_parts.append(f"ER:{tag}")
+        cyber_info = " ".join(cyber_parts) if cyber_parts else "—"
 
         # Phone
         phone_info = ""
@@ -328,7 +339,7 @@ def _print_result_table(results):
             f"[{status_color}]{r.status}[/{status_color}]",
             holehe_info,
             profile_info,
-            er_info,
+            cyber_info,
             phone_info,
             str(r.final_enrichment_score),
             f"[{tier_color}]{r.outreach_enrichment_tier}[/{tier_color}]",
@@ -339,20 +350,41 @@ def _print_result_table(results):
 
 def _print_summary(summary):
     """Print run summary."""
+
+    def _prov_stat(label: str, name: str) -> str:
+        calls = getattr(summary, f"{name}_calls", 0)
+        successes = getattr(summary, f"{name}_successes", 0)
+        return f"{label}: {successes}/{calls}"
+
+    provider_lines = [
+        " | ".join([
+            _prov_stat("Holehe", "holehe"),
+            _prov_stat("Blackbird", "blackbird"),
+            _prov_stat("Maigret", "maigret"),
+        ]),
+        " | ".join([
+            _prov_stat("Sherlock", "sherlock"),
+            _prov_stat("Phone", "phone_extractor"),
+            _prov_stat("EmailRep", "emailrep"),
+        ]),
+        " | ".join([
+            _prov_stat("Mosint", "mosint"),
+            _prov_stat("EmailCrawlr", "emailcrawlr"),
+            _prov_stat("HudsonRock", "hudsonrock"),
+        ]),
+        " | ".join([
+            _prov_stat("Gravatar", "gravatar"),
+            _prov_stat("Socialscan", "socialscan"),
+        ]),
+    ]
+
     console.print(Panel(
         f"Total: {summary.total_emails} | "
         f"[green]Success: {summary.success}[/green] | "
         f"[yellow]Partial: {summary.partial}[/yellow] | "
         f"[red]Failed: {summary.failed}[/red] | "
         f"Skipped: {summary.skipped}\n"
-        f"Holehe: {summary.holehe_successes}/{summary.holehe_calls} | "
-        f"Blackbird: {summary.blackbird_successes}/{summary.blackbird_calls} | "
-        f"Maigret: {summary.maigret_successes}/{summary.maigret_calls}\n"
-        f"Sherlock: {summary.sherlock_successes}/{summary.sherlock_calls} | "
-        f"Phone: {summary.phone_extractor_successes}/{summary.phone_extractor_calls}\n"
-        f"EmailRep: {summary.emailrep_successes}/{summary.emailrep_calls} | "
-        f"Mosint: {summary.mosint_successes}/{summary.mosint_calls} | "
-        f"EmailCrawlr: {summary.emailcrawlr_successes}/{summary.emailcrawlr_calls}\n"
+        + "\n".join(provider_lines) + "\n"
         f"Profiles discovered: {summary.total_profiles_discovered} | "
         f"Phone candidates: {summary.total_phone_candidates}\n"
         f"Avg Footprint: {summary.avg_footprint_score:.1f} | "

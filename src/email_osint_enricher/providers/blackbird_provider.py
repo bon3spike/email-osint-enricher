@@ -19,11 +19,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from email_osint_enricher.providers.base import BaseProvider, ProviderContext, ProviderResult
 from email_osint_enricher.schemas import BlackbirdResult
@@ -106,7 +107,7 @@ class BlackbirdProvider(BaseProvider):
             "profiles": unique_profiles,
         }
         result.raw = raw_data
-        result.raw_json_path = self._save_raw(context.email, raw_data)
+        result.raw_json_path = self.save_raw(context.email, raw_data)
 
         return result
 
@@ -213,7 +214,6 @@ class BlackbirdProvider(BaseProvider):
             # Blackbird выводит [+] Site: URL
             if "[+]" in line or "[FOUND]" in line.upper():
                 # Извлечь URL
-                import re
                 urls = re.findall(r'https?://\S+', line)
                 profiles.extend(urls)
         return profiles
@@ -232,11 +232,3 @@ class BlackbirdProvider(BaseProvider):
             "blackbird_error": result.error,
         }
 
-    def _save_raw(self, email: str, data: dict) -> Optional[str]:
-        if not self.raw_output_dir:
-            return None
-        self.raw_output_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = email.replace("@", "_at_").replace(".", "_")
-        path = self.raw_output_dir / f"{safe_name}.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        return str(path)

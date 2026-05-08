@@ -39,6 +39,7 @@ class TestProviderRegistry:
             "holehe", "blackbird", "maigret", "sherlock",
             "phone_extractor",
             "emailrep", "mosint", "emailcrawlr",
+            "hudsonrock", "gravatar", "socialscan",
         }
         assert set(PROVIDER_REGISTRY.keys()) == expected
 

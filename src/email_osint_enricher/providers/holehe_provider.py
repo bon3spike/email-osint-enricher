@@ -120,7 +120,7 @@ class HoleheProvider(BaseProvider):
 
             result = self._parse_modules_output(out, result)
             result.raw = {"email": email, "modules": out}
-            result.raw_json_path = self._save_raw(email, result.raw)
+            result.raw_json_path = self.save_raw(email, result.raw)
 
         except ImportError as e:
             logger.warning(f"Holehe library import issue: {e}")
@@ -152,7 +152,7 @@ class HoleheProvider(BaseProvider):
                 result = self._parse_cli_text(stdout.decode(), result)
                 raw_data = {"email": email, "stdout": stdout.decode(), "services": result.registered_services_list}
                 result.raw = raw_data
-                result.raw_json_path = self._save_raw(email, raw_data)
+                result.raw_json_path = self.save_raw(email, raw_data)
             else:
                 logger.warning(f"Holehe CLI returned code {proc.returncode}")
                 if stderr:
@@ -229,17 +229,3 @@ class HoleheProvider(BaseProvider):
             "holehe_error": result.error,
         }
 
-    def _save_raw(self, email: str, data: dict) -> Optional[str]:
-        if not self.raw_output_dir:
-            return None
-        self.raw_output_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = email.replace("@", "_at_").replace(".", "_")
-        path = self.raw_output_dir / f"{safe_name}.json"
-
-        def _default_ser(obj):
-            if isinstance(obj, set):
-                return list(obj)
-            return str(obj)
-
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=_default_ser))
-        return str(path)

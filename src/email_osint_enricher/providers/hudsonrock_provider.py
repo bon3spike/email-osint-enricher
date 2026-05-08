@@ -96,7 +96,7 @@ class HudsonRockProvider(BaseProvider):
                     result.total_corporate_services = total_corporate
                     result.total_user_services = total_user
                     result.compromised_dates = ", ".join(dates[:5])
-                    result.operating_systems = ", ".join(set(os_list)[:3])
+                    result.operating_systems = ", ".join(list(set(os_list))[:3])
 
                     # Latest infection date
                     if dates:
@@ -112,7 +112,7 @@ class HudsonRockProvider(BaseProvider):
                     # just no cybercrime data
                     result.confidence_score = 0.1
 
-                result.raw_json_path = self._save_raw(context.email, data)
+                result.raw_json_path = self.save_raw(context.email, data)
 
         except httpx.TimeoutException:
             logger.warning("HudsonRock timed out")
@@ -139,11 +139,3 @@ class HudsonRockProvider(BaseProvider):
             "hudsonrock_error": result.error,
         }
 
-    def _save_raw(self, email: str, data: dict) -> Optional[str]:
-        if not self.raw_output_dir:
-            return None
-        self.raw_output_dir.mkdir(parents=True, exist_ok=True)
-        safe = email.replace("@", "_at_").replace(".", "_")
-        path = self.raw_output_dir / f"{safe}.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        return str(path)

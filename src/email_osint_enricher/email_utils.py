@@ -187,3 +187,27 @@ def precheck_domains(emails: list[str]) -> dict[str, dict]:
         }
 
     return results
+
+
+async def precheck_domains_async(emails: list[str]) -> dict[str, dict]:
+    """Async parallel domain precheck: MX + Google Workspace detection.
+
+    Runs all DNS lookups concurrently via thread pool — much faster for
+    large batches with many unique domains.
+    """
+    domains = set(get_domain(e) for e in emails)
+    domains.discard("")
+
+    loop = asyncio.get_event_loop()
+
+    async def _check_one(domain: str) -> tuple[str, dict]:
+        mx = await loop.run_in_executor(None, lookup_mx, domain)
+        gws = await loop.run_in_executor(None, is_google_workspace, domain)
+        return domain, {
+            "has_mx": len(mx) > 0,
+            "is_google_workspace": gws,
+            "mx_hosts": mx,
+        }
+
+    results_list = await asyncio.gather(*[_check_one(d) for d in domains])
+    return dict(results_list)

@@ -91,7 +91,7 @@ class SherlockProvider(BaseProvider):
             "profiles": unique,
         }
         result.raw = raw_data
-        result.raw_json_path = self._save_raw(context.email, raw_data)
+        result.raw_json_path = self.save_raw(context.email, raw_data)
 
         return result
 
@@ -172,11 +172,3 @@ class SherlockProvider(BaseProvider):
             "sherlock_error": result.error,
         }
 
-    def _save_raw(self, email: str, data: dict) -> Optional[str]:
-        if not self.raw_output_dir:
-            return None
-        self.raw_output_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = email.replace("@", "_at_").replace(".", "_")
-        path = self.raw_output_dir / f"{safe_name}.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        return str(path)
