@@ -66,7 +66,7 @@ class AppConfig(BaseModel):
         "maigret": ProviderConfig(enabled=True),
         "sherlock": ProviderConfig(enabled=False),
         "phone_extractor": ProviderConfig(enabled=True),
-        "emailrep": ProviderConfig(enabled=True, timeout_seconds=60),
+        "emailrep": ProviderConfig(enabled=False, timeout_seconds=60),
         "mosint": ProviderConfig(enabled=False, timeout_seconds=180),
         "emailcrawlr": ProviderConfig(enabled=False, timeout_seconds=60),
         "hudsonrock": ProviderConfig(enabled=True, timeout_seconds=30),

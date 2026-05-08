@@ -25,9 +25,9 @@ providers:
 
   # ── Optional providers ───────────────────────────────────────────────────
   emailrep:
-    enabled: true
+    enabled: false   # Rate-limited without API key; enable if you have EMAILREP_API_KEY
     timeout_seconds: 60
-    api_key_env: EMAILREP_API_KEY  # Optional — works unauthenticated too
+    api_key_env: EMAILREP_API_KEY
 
   mosint:
     enabled: false   # Requires mosint Go binary in PATH
