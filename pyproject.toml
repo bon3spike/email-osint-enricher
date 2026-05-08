@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "email-osint-enricher"
-version = "0.4.0"
+version = "0.5.1"
 description = "Local OSINT email enrichment tool — 11 providers, advanced scoring, all-in-one repo"
 readme = "README.md"
 requires-python = ">=3.11"

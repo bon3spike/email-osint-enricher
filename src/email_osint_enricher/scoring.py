@@ -548,7 +548,7 @@ def score_result(
     result.recommended_next_action = get_recommended_action(tier)
 
     result.manual_review_needed = (
-        result.status == "partial"
+        str(result.status) == "partial" or result.status == "partial"
         or tier == EnrichmentTier.medium
         or result.conflict_risk_score >= 30
         or (result.identity_confidence_score >= 30 and result.identity_confidence_score < 70)

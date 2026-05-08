@@ -277,10 +277,11 @@ def _print_result_table(results):
     table.add_column("Tier", style="bold")
 
     for r in results:
+        _status_str = r.status.value if hasattr(r.status, "value") else str(r.status)
         status_color = {
             "success": "green", "partial": "yellow",
             "failed": "red", "skipped": "dim",
-        }.get(r.status, "white")
+        }.get(_status_str, "white")
 
         tier_color = {
             "Strong": "green", "Medium": "yellow",
@@ -336,7 +337,7 @@ def _print_result_table(results):
         table.add_row(
             mask_email(r.email),
             r.email_type,
-            f"[{status_color}]{r.status}[/{status_color}]",
+            f"[{status_color}]{_status_str}[/{status_color}]",
             holehe_info,
             profile_info,
             cyber_info,

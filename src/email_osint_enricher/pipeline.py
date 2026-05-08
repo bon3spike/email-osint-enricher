@@ -272,19 +272,19 @@ class EnrichmentPipeline:
         holehe_res_empty = HoleheResult()
 
         if self.resume and normalized in self._completed_emails:
-            result.status = ProcessingStatus.skipped.value
+            result.status = ProcessingStatus.skipped
             result.error_message = "already processed (resume mode)"
             logger.debug(f"Skipping already-processed: {email_display}")
             return score_result(result, holehe_res_empty, row)
 
         if domain and not domain_has_mx:
-            result.status = ProcessingStatus.skipped.value
+            result.status = ProcessingStatus.skipped
             result.error_message = f"Domain {domain} has no MX records"
             logger.info(f"Skipping {email_display}: no MX records for {domain}")
             return score_result(result, holehe_res_empty, row)
 
         if self.dry_run:
-            result.status = ProcessingStatus.skipped.value
+            result.status = ProcessingStatus.skipped
             result.error_message = "dry-run mode"
             return score_result(result, holehe_res_empty, row)
 
@@ -372,34 +372,39 @@ class EnrichmentPipeline:
         successes = [r for r in checked if r.success]
 
         if not checked:
-            result.status = ProcessingStatus.skipped.value
+            result.status = ProcessingStatus.skipped
         elif len(successes) == len(checked):
-            result.status = ProcessingStatus.success.value
+            result.status = ProcessingStatus.success
         elif successes:
-            result.status = ProcessingStatus.partial.value
+            result.status = ProcessingStatus.partial
         else:
-            result.status = ProcessingStatus.failed.value
+            result.status = ProcessingStatus.failed
 
         # ── Score ────────────────────────────────────────────────────────
         holehe_res = provider_results["holehe"]
-        result = score_result(
-            result, holehe_res, row,
-            **{
-                name: (res if res.checked else None)
-                for name, res in provider_results.items()
-                if name != "holehe"
-            },
-        )
+        # Map provider_results keys to score_result parameter names
+        # (phone_extractor → phone; all others match)
+        _SCORE_PARAM_MAP = {"phone_extractor": "phone"}
+        score_kwargs = {
+            _SCORE_PARAM_MAP.get(name, name): (res if res.checked else None)
+            for name, res in provider_results.items()
+            if name != "holehe"
+        }
+        result = score_result(result, holehe_res, row, **score_kwargs)
 
         return result
 
     async def _run_with_retry(self, coro_fn, context, provider: str):
-        """Run a provider coroutine with retries and exponential backoff."""
+        """Run a provider coroutine with retries and exponential backoff.
+
+        Note: concurrency is controlled at the email level (email_semaphore
+        in process_batch), not per-provider, to avoid double-semaphore
+        contention that stalls the pipeline.
+        """
         last_exc = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                async with self.semaphore:
-                    return await coro_fn(context)
+                return await coro_fn(context)
             except Exception as e:
                 last_exc = e
                 wait = 2 ** attempt
@@ -411,8 +416,7 @@ class EnrichmentPipeline:
 
         # Final attempt
         try:
-            async with self.semaphore:
-                return await coro_fn(context)
+            return await coro_fn(context)
         except Exception as e:
             logger.error(f"{provider} all retries exhausted: {e}")
             result_cls = _EMPTY_RESULT_MAP.get(provider, HoleheResult)
@@ -445,7 +449,7 @@ class EnrichmentPipeline:
                     email_domain=get_domain(row.email),
                     email_type=classify_email(row.email).value,
                     input_row_id=row.input_row_id,
-                    status=ProcessingStatus.skipped.value,
+                    status=ProcessingStatus.skipped,
                     error_message="duplicate email (normalized)",
                     applicantId=row.applicantId,
                     externalId=row.externalId,
@@ -506,7 +510,7 @@ class EnrichmentPipeline:
                             email_domain=get_domain(row.email),
                             email_type=classify_email(row.email).value,
                             input_row_id=row.input_row_id,
-                            status=ProcessingStatus.failed.value,
+                            status=ProcessingStatus.failed,
                             error_message=str(e),
                         )
 
@@ -619,7 +623,7 @@ class EnrichmentPipeline:
         summary: RunSummary,
     ) -> dict[str, str]:
         """Write results to disk."""
-        errors = [r for r in results if r.status in (ProcessingStatus.failed.value,)]
+        errors = [r for r in results if r.status in (ProcessingStatus.failed,)]
         paths = write_results(
             results=results,
             errors=errors,

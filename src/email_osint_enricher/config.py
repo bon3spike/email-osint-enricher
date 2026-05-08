@@ -38,6 +38,13 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         with open(path) as f:
             raw = yaml.safe_load(f) or {}
         cfg = AppConfig(**raw)
+
+        # Merge: ensure providers added in newer versions are present
+        # even if the user's config.yaml was copied from an older template
+        defaults = AppConfig()
+        for pname, pconf in defaults.providers.items():
+            if pname not in cfg.providers:
+                cfg.providers[pname] = pconf
     else:
         cfg = AppConfig()
 
